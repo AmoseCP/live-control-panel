@@ -1,0 +1,390 @@
+using LiveControlPanel.Core;
+using LiveControlPanel.Obs;
+using LiveControlPanel.Youtube;
+using Xunit;
+
+namespace LiveControlPanel.Tests;
+
+/// <summary>
+/// Covers the plan's T-05, T-06, T-03 and T-26 cases: idempotency under repeated taps, resumable
+/// failure, two services in one day, and the confirmed stop path.
+/// </summary>
+public class OrchestratorTests
+{
+    [Fact]
+    public async Task Start_runs_all_six_steps_and_reports_success()
+    {
+        using var host = new TestHost();
+        host.WithThumbnail();
+        host.SetToday();
+        // Start away from the camera scene so step 4 actually has work to do.
+        host.Obs.CurrentScene = "PPT";
+
+        var outcome = await host.Orchestrator.StartTodayAsync();
+
+        Assert.True(outcome.Ok);
+        Assert.Null(outcome.FailedStep);
+        Assert.Equal(1, host.YouTube.CreateCalls);
+        Assert.Equal(1, host.YouTube.BindCalls);
+        Assert.Equal(1, host.YouTube.ThumbnailCalls);
+        Assert.Equal(new[] { "摄像机" }, host.Obs.ScenesSet);
+        Assert.Equal(1, host.Obs.StartStreamCalls);
+
+        var state = host.State.Snapshot();
+        Assert.Equal(Phase.Live, state.Phase);
+        Assert.Equal(BroadcastStatus.Live, state.Broadcast!.Status);
+        Assert.Equal("https://www.youtube.com/live/bcast1", state.Broadcast.WatchUrl);
+        Assert.All(state.Steps, step => Assert.Contains(step.Status, new[] { "done", "skipped" }));
+    }
+
+    [Fact]
+    public async Task Watch_url_has_no_feature_share_suffix()
+    {
+        using var host = new TestHost();
+        host.SetToday();
+
+        await host.Orchestrator.StartTodayAsync();
+
+        var url = host.State.Snapshot().Broadcast!.WatchUrl!;
+        Assert.StartsWith("https://www.youtube.com/live/", url);
+        Assert.DoesNotContain("feature", url);
+        Assert.DoesNotContain("?", url);
+    }
+
+    [Fact]
+    public async Task Broadcast_is_created_with_the_parameters_the_requirements_mandate()
+    {
+        using var host = new TestHost();
+        host.SetToday();
+
+        await host.Orchestrator.StartTodayAsync();
+
+        var request = host.YouTube.LastCreateRequest!;
+        Assert.Equal("8/5/2026 Wednesday Service", request.Title);
+        Assert.Equal("unlisted", request.PrivacyStatus);
+        Assert.False(request.MadeForKids);
+        Assert.Equal("ultraLow", request.LatencyPreference);
+        Assert.Equal(new DateTime(2026, 8, 5, 18, 0, 0), request.ScheduledStart);
+        Assert.Equal("God Bless You!", request.Description);
+    }
+
+    // ---------------------------------------------------------------- T-05 idempotency
+
+    [Fact]
+    public async Task Five_sequential_taps_create_one_broadcast_and_start_one_stream()
+    {
+        using var host = new TestHost();
+        host.WithThumbnail();
+        host.SetToday();
+
+        for (var i = 0; i < 5; i++)
+        {
+            var outcome = await host.Orchestrator.StartTodayAsync();
+            Assert.True(outcome.Ok);
+        }
+
+        Assert.Equal(1, host.YouTube.CreateCalls);
+        Assert.Equal(1, host.YouTube.BindCalls);
+        Assert.Equal(1, host.YouTube.ThumbnailCalls);
+        Assert.Equal(1, host.Obs.StartStreamCalls);
+    }
+
+    [Fact]
+    public async Task Five_concurrent_taps_create_one_broadcast_and_start_one_stream()
+    {
+        using var host = new TestHost();
+        host.SetToday();
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 5)
+            .Select(_ => host.Orchestrator.StartTodayAsync()));
+
+        Assert.All(results, outcome => Assert.True(outcome.Ok));
+        Assert.Equal(1, host.YouTube.CreateCalls);
+        Assert.Equal(1, host.Obs.StartStreamCalls);
+    }
+
+    // ---------------------------------------------------------------- T-06 resumable failure
+
+    [Fact]
+    public async Task A_failure_reports_its_step_and_leaves_earlier_work_intact()
+    {
+        using var host = new TestHost();
+        host.SetToday();
+        host.Obs.FailOnce[nameof(FakeObsClient.StartStreamAsync)] = new ObsUnavailableException();
+
+        var outcome = await host.Orchestrator.StartTodayAsync();
+
+        Assert.False(outcome.Ok);
+        Assert.Equal(Orchestrator.StepStream, outcome.FailedStep);
+        Assert.Contains("OBS", outcome.Message);
+
+        // The broadcast exists and is bound; only the stream failed.
+        Assert.Equal(1, host.YouTube.CreateCalls);
+        Assert.Equal(1, host.YouTube.BindCalls);
+        Assert.Equal(0, host.Obs.StartStreamCalls);
+
+        var failed = host.State.Snapshot().Steps.Single(s => s.Status == "failed");
+        Assert.Equal(Orchestrator.StepStream, failed.Step);
+    }
+
+    [Fact]
+    public async Task Retrying_from_the_failed_step_does_not_create_a_second_broadcast()
+    {
+        using var host = new TestHost();
+        host.SetToday();
+        host.Obs.FailOnce[nameof(FakeObsClient.StartStreamAsync)] = new ObsUnavailableException();
+
+        var first = await host.Orchestrator.StartTodayAsync();
+        Assert.Equal(Orchestrator.StepStream, first.FailedStep);
+
+        var retry = await host.Orchestrator.StartTodayAsync(first.FailedStep!.Value);
+
+        Assert.True(retry.Ok);
+        Assert.Equal(1, host.YouTube.CreateCalls);
+        Assert.Equal(1, host.YouTube.BindCalls);
+        Assert.Equal(1, host.Obs.StartStreamCalls);
+    }
+
+    [Fact]
+    public async Task Restarting_from_step_one_after_a_failure_still_creates_only_one_broadcast()
+    {
+        // Even the wrong recovery move must not double-book: step 1 is guarded by existing state.
+        using var host = new TestHost();
+        host.SetToday();
+        host.Obs.FailOnce[nameof(FakeObsClient.StartStreamAsync)] = new ObsUnavailableException();
+
+        await host.Orchestrator.StartTodayAsync();
+        var retry = await host.Orchestrator.StartTodayAsync(Orchestrator.StepCreate);
+
+        Assert.True(retry.Ok);
+        Assert.Equal(1, host.YouTube.CreateCalls);
+    }
+
+    [Fact]
+    public async Task A_failure_message_never_leaks_technical_detail()
+    {
+        using var host = new TestHost();
+        host.SetToday();
+        host.YouTube.FailOnce[nameof(FakeYouTubeClient.CreateBroadcastAsync)] = new NotAuthorizedException();
+
+        var outcome = await host.Orchestrator.StartTodayAsync();
+
+        Assert.False(outcome.Ok);
+        Assert.Equal(Orchestrator.StepCreate, outcome.FailedStep);
+        Assert.DoesNotContain("Exception", outcome.Message);
+        Assert.DoesNotContain("403", outcome.Message);
+        Assert.Contains("重新授权", outcome.Message);
+    }
+
+    // ---------------------------------------------------------------- step guards
+
+    [Fact]
+    public async Task Start_refuses_when_nothing_is_scheduled()
+    {
+        using var host = new TestHost();
+
+        var outcome = await host.Orchestrator.StartTodayAsync();
+
+        Assert.False(outcome.Ok);
+        Assert.Equal(0, host.YouTube.CreateCalls);
+        Assert.Contains("没有排期", outcome.Message);
+    }
+
+    [Fact]
+    public async Task Bind_fails_with_an_actionable_message_when_no_stream_key_exists()
+    {
+        using var host = new TestHost();
+        host.Config.UpdateSettings(s => s.StreamId = "");
+        host.SetToday();
+
+        var outcome = await host.Orchestrator.StartTodayAsync();
+
+        Assert.False(outcome.Ok);
+        Assert.Equal(Orchestrator.StepBind, outcome.FailedStep);
+        Assert.Contains("推流密钥", outcome.Message);
+    }
+
+    [Fact]
+    public async Task A_missing_thumbnail_file_is_skipped_rather_than_blocking_the_stream()
+    {
+        using var host = new TestHost();
+        host.Config.UpdateSettings(s => s.DefaultThumbnail = "thumbnails/not-there.jpg");
+        host.SetToday();
+
+        var outcome = await host.Orchestrator.StartTodayAsync();
+
+        Assert.True(outcome.Ok);
+        Assert.Equal(0, host.YouTube.ThumbnailCalls);
+
+        var step = host.State.Snapshot().Steps.Single(s => s.Step == Orchestrator.StepThumbnail);
+        Assert.Equal("skipped", step.Status);
+    }
+
+    [Fact]
+    public async Task Scene_switching_is_skipped_when_obs_is_already_on_the_starting_scene()
+    {
+        using var host = new TestHost();
+        host.Obs.CurrentScene = "摄像机";
+        host.SetToday();
+
+        await host.Orchestrator.StartTodayAsync();
+
+        Assert.Empty(host.Obs.ScenesSet);
+    }
+
+    [Fact]
+    public async Task Stream_start_is_skipped_when_obs_is_already_streaming()
+    {
+        using var host = new TestHost();
+        host.Obs.Streaming = true;
+        host.SetToday();
+
+        await host.Orchestrator.StartTodayAsync();
+
+        Assert.Equal(0, host.Obs.StartStreamCalls);
+    }
+
+    [Fact]
+    public async Task Await_live_times_out_with_an_actionable_message_when_youtube_never_goes_live()
+    {
+        using var host = new TestHost();
+        host.SetToday();
+        host.YouTube.LifeCycleStatus = "ready";
+
+        // Kept short: the production timeout is 60s and the test only needs the failure shape.
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+
+        var outcome = await host.Orchestrator.StartTodayAsync(ct: cts.Token);
+
+        Assert.False(outcome.Ok);
+        Assert.Equal(Orchestrator.StepAwaitLive, outcome.FailedStep);
+    }
+
+    // ---------------------------------------------------------------- T-26 stop
+
+    [Fact]
+    public async Task Stop_stops_obs_first_then_completes_the_broadcast()
+    {
+        using var host = new TestHost();
+        host.SetToday();
+        await host.Orchestrator.StartTodayAsync();
+
+        var outcome = await host.Orchestrator.StopAsync();
+
+        Assert.True(outcome.Ok);
+        Assert.Equal(1, host.Obs.StopStreamCalls);
+        Assert.Equal(1, host.YouTube.TransitionCalls);
+        Assert.False(host.Obs.Streaming);
+
+        var state = host.State.Snapshot();
+        Assert.Equal(Phase.Ended, state.Phase);
+        Assert.Equal(BroadcastStatus.Complete, state.Broadcast!.Status);
+    }
+
+    [Fact]
+    public async Task Stop_tells_the_operator_to_use_obs_directly_when_obs_refuses()
+    {
+        using var host = new TestHost();
+        host.SetToday();
+        await host.Orchestrator.StartTodayAsync();
+        host.Obs.FailOnce[nameof(FakeObsClient.StopStreamAsync)] = new ObsUnavailableException();
+
+        var outcome = await host.Orchestrator.StopAsync();
+
+        Assert.False(outcome.Ok);
+        Assert.Contains("OBS", outcome.Message);
+        Assert.Equal(0, host.YouTube.TransitionCalls);
+    }
+
+    [Fact]
+    public async Task Stop_says_so_plainly_when_youtube_will_not_confirm_the_end()
+    {
+        using var host = new TestHost();
+        host.SetToday();
+        await host.Orchestrator.StartTodayAsync();
+        host.YouTube.FailOnce[nameof(FakeYouTubeClient.TransitionToCompleteAsync)] =
+            new HttpRequestException("network down");
+
+        var outcome = await host.Orchestrator.StopAsync();
+
+        Assert.False(outcome.Ok);
+        Assert.Contains("推流已停止", outcome.Message);
+
+        // The stream really has stopped, so the panel must not still claim to be live.
+        Assert.Equal(Phase.Ended, host.State.Snapshot().Phase);
+    }
+
+    // ---------------------------------------------------------------- T-04 leftover broadcast
+
+    [Fact]
+    public async Task End_previous_completes_every_leftover_broadcast()
+    {
+        using var host = new TestHost();
+        host.YouTube.Unfinished = new List<BroadcastInfo>
+        {
+            new("old1", "8/5/2026 Morning Service", "live", "https://www.youtube.com/live/old1"),
+            new("old2", "8/4/2026 Morning Service", "ready", "https://www.youtube.com/live/old2"),
+        };
+
+        var outcome = await host.Orchestrator.EndPreviousAsync();
+
+        Assert.True(outcome.Ok);
+        Assert.Equal(new[] { "old1", "old2" }, host.YouTube.TransitionedIds);
+    }
+
+    [Fact]
+    public async Task End_previous_never_ends_the_broadcast_this_session_created()
+    {
+        using var host = new TestHost();
+        host.SetToday();
+        await host.Orchestrator.StartTodayAsync();
+
+        var current = host.State.Snapshot().Broadcast!.Id!;
+        host.YouTube.Unfinished = new List<BroadcastInfo>
+        {
+            new(current, "today", "live", "url"),
+            new("old1", "yesterday", "live", "url"),
+        };
+
+        await host.Orchestrator.EndPreviousAsync();
+
+        Assert.Equal(new[] { "old1" }, host.YouTube.TransitionedIds);
+    }
+
+    // ---------------------------------------------------------------- T-03 two services in one day
+
+    [Fact]
+    public async Task Start_another_clears_state_so_a_second_service_can_run_the_same_day()
+    {
+        using var host = new TestHost();
+        host.SetToday("8/5/2026 Morning Service", "morning-service");
+        await host.Orchestrator.StartTodayAsync();
+        await host.Notifications.SendCurrentAsync();
+        await host.Orchestrator.StopAsync();
+
+        Assert.True(host.Orchestrator.StartAnother());
+
+        var state = host.State.Snapshot();
+        Assert.Null(state.Broadcast);
+        Assert.Null(state.Telegram.SentAt);
+        Assert.Empty(state.Steps);
+
+        host.SetToday("8/5/2026 Wednesday Service", "wednesday-service");
+        var second = await host.Orchestrator.StartTodayAsync();
+
+        Assert.True(second.Ok);
+        Assert.Equal(2, host.YouTube.CreateCalls);
+        Assert.Equal("8/5/2026 Wednesday Service", host.YouTube.LastCreateRequest!.Title);
+    }
+
+    [Fact]
+    public async Task Start_another_is_refused_while_the_current_service_is_still_live()
+    {
+        using var host = new TestHost();
+        host.SetToday();
+        await host.Orchestrator.StartTodayAsync();
+
+        Assert.False(host.Orchestrator.StartAnother());
+        Assert.NotNull(host.State.Snapshot().Broadcast);
+    }
+}

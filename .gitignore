@@ -1,0 +1,32 @@
+# ---- Requirement & planning documents (kept locally, not published) ----
+需求文档-直播控制面板.md
+开发计划-直播控制面板.md
+直播控制面板-需求文档与开发计划.md
+OBS配置清单-阶段0.md
+
+# ---- Build output ----
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+publish/
+*.user
+*.suo
+.vs/
+
+# ---- Runtime data (never commit: contains access code, PIN, tokens) ----
+token.dat
+settings.json
+templates.json
+logs/
+thumbnails/*
+!thumbnails/.gitkeep
+
+# ---- Local agent / editor config (not part of the application) ----
+.claude/
+
+# ---- Editor / OS ----
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

@@ -1,0 +1,16 @@
+# Normalize to LF in the repository; Git checks out native line endings on Windows.
+* text=auto
+
+*.cs      text diff=csharp
+*.csproj  text
+*.sln     text eol=crlf
+*.md      text
+*.html    text
+*.css     text
+*.js      text
+*.json    text
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.dat binary

@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>设置 · 直播控制面板</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<h1>设置</h1>
+<button class="ghost" id="btn-back">← 返回控制面板</button>
+
+<!-- PIN gate: guards against mis-edits by seven people sharing one PC, not against attackers -->
+<section id="pin-card" class="card">
+  <h2>请输入设置密码</h2>
+  <input type="password" id="pin" inputmode="numeric" autocomplete="off" placeholder="四到六位数字">
+  <button class="primary" id="btn-unlock" style="margin-top:10px">解锁</button>
+  <p class="subtle" style="margin-bottom:0">忘记密码请查看服务器上的 settings.json。</p>
+</section>
+
+<div id="settings-body" class="hidden">
+
+  <section class="card">
+    <h2>访问地址与二维码</h2>
+    <div id="access-addresses"></div>
+    <div class="qr" id="qr-holder" style="margin-top:10px"></div>
+    <p class="subtle">让操作员用 iPad 扫这个码，然后「添加到主屏幕」。</p>
+  </section>
+
+  <section class="card">
+    <h2>YouTube 授权</h2>
+    <label for="yt-client-id">Client ID</label>
+    <input type="text" id="yt-client-id" autocomplete="off">
+    <label for="yt-client-secret">Client Secret</label>
+    <input type="password" id="yt-client-secret" autocomplete="off">
+    <div class="stack" style="margin-top:12px">
+      <button id="btn-authorize">开始授权 / 重新授权</button>
+      <button class="ghost" id="btn-revoke">清除现有授权</button>
+    </div>
+    <p class="subtle" id="auth-status"></p>
+  </section>
+
+  <section class="card">
+    <h2>推流密钥（一次性）</h2>
+    <p class="subtle">创建一次即可长期使用，此后每场直播只做绑定，OBS 里不必再改。</p>
+    <p class="subtle">当前 streamId：<span id="stream-id">—</span></p>
+    <button id="btn-create-key">创建可复用推流密钥</button>
+    <div id="stream-key-result" class="hidden" style="margin-top:10px">
+      <label>推流地址（填入 OBS「服务器」）</label>
+      <div class="linkbox" id="ingest-address"></div>
+      <label>串流密钥（填入 OBS「串流密钥」）</label>
+      <div class="linkbox" id="ingest-key"></div>
+      <button style="margin-top:10px" id="btn-copy-key">复制串流密钥</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Telegram</h2>
+    <label for="tg-token">Bot Token</label>
+    <input type="password" id="tg-token" autocomplete="off">
+    <label for="tg-chat">群 ID（负数；超级群以 -100 开头）</label>
+    <input type="text" id="tg-chat" inputmode="text" autocomplete="off">
+    <label for="tg-message">消息模板（可用 {title} 与 {url}）</label>
+    <textarea id="tg-message"></textarea>
+    <button style="margin-top:10px" id="btn-test-telegram">发送测试消息</button>
+  </section>
+
+  <section class="card">
+    <h2>OBS</h2>
+    <label for="obs-url">WebSocket 地址</label>
+    <input type="text" id="obs-url">
+    <label for="obs-password">WebSocket 密码</label>
+    <input type="password" id="obs-password" autocomplete="off">
+    <label for="obs-scene-camera">摄像机场景名</label>
+    <input type="text" id="obs-scene-camera">
+    <label for="obs-scene-slides">幻灯片场景名</label>
+    <input type="text" id="obs-scene-slides">
+    <label for="obs-audio">音频输入名（用于自检）</label>
+    <input type="text" id="obs-audio">
+    <label for="obs-video">画面来源名（用于自检，多个用逗号分隔）</label>
+    <input type="text" id="obs-video">
+    <button class="ghost" style="margin-top:10px" id="btn-list-inputs">列出 OBS 里的输入名</button>
+    <pre class="linkbox hidden" id="obs-inputs" style="margin-top:10px"></pre>
+  </section>
+
+  <section class="card">
+    <h2>幻灯片窗口</h2>
+    <p class="subtle">让 WPS 进入全屏放映，然后点下面的按钮，从列表里找到放映窗口，把类名填进来。</p>
+    <label for="slides-class">窗口类名</label>
+    <input type="text" id="slides-class">
+    <label for="slides-title">窗口标题正则（可留空）</label>
+    <input type="text" id="slides-title">
+    <label for="slides-strategy">发送方式</label>
+    <select id="slides-strategy">
+      <option value="PostMessage">PostMessage（默认，不抢焦点）</option>
+      <option value="SendInput">SendInput（回退方案，会短暂抢焦点）</option>
+    </select>
+    <button class="ghost" style="margin-top:10px" id="btn-list-windows">列出所有窗口</button>
+    <div id="windows-list" style="margin-top:10px"></div>
+  </section>
+
+  <section class="card">
+    <h2>其他</h2>
+    <label for="default-description">默认简介</label>
+    <textarea id="default-description"></textarea>
+    <label for="default-thumbnail">默认封面文件（相对数据目录）</label>
+    <input type="text" id="default-thumbnail">
+    <label for="window-before">匹配窗口：开始前多少分钟</label>
+    <input type="number" id="window-before" min="0" max="720">
+    <label for="window-after">匹配窗口：开始后多少分钟</label>
+    <input type="number" id="window-after" min="0" max="720">
+    <label for="new-pin">修改设置密码（留空则不改）</label>
+    <input type="password" id="new-pin" autocomplete="off">
+  </section>
+
+  <section class="card">
+    <h2>场次</h2>
+    <table class="templates">
+      <thead><tr><th>名称</th><th>星期</th><th>时间</th></tr></thead>
+      <tbody id="templates-body"></tbody>
+    </table>
+    <p class="subtle">星期：0=周日 … 6=周六。修改场次请直接编辑服务器上的 templates.json 后重启服务。</p>
+  </section>
+
+  <section class="card">
+    <button class="primary" id="btn-save">保存设置</button>
+  </section>
+
+</div>
+
+<div id="toast" class="hidden"></div>
+
+<script src="common.js"></script>
+<script src="settings.js"></script>
+</body>
+</html>

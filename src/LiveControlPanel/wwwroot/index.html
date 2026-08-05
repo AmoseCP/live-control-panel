@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="直播控制">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>直播控制面板</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="offline" class="hidden">连接中断，正在重新连接…</div>
+
+<h1>直播控制面板</h1>
+
+<!-- phase: NoSchedule -->
+<section id="phase-noschedule" class="card hidden">
+  <h2>本日无排期</h2>
+  <p id="next-service" class="subtle">正在读取下一场时间…</p>
+  <button class="ghost" id="btn-pick-other">手动选择一场 →</button>
+</section>
+
+<!-- phase: Ready -->
+<section id="phase-ready" class="card hidden">
+  <h2>今天</h2>
+  <p class="title-big" id="ready-title">—</p>
+  <p class="subtle" id="ready-time"></p>
+  <div class="stack" style="margin-top:14px">
+    <button class="primary" id="btn-start">开始今天的直播</button>
+    <button class="ghost" id="btn-not-this">不是这一场？</button>
+  </div>
+</section>
+
+<!-- start progress -->
+<section id="progress-card" class="card hidden">
+  <h2>正在开始直播</h2>
+  <ol class="steps" id="steps"></ol>
+  <button class="hidden" id="btn-retry">重试这一步</button>
+</section>
+
+<!-- pre-flight -->
+<section id="preflight-card" class="card hidden">
+  <h2>开播前自检</h2>
+  <div id="preflight"></div>
+  <p class="subtle" style="margin-bottom:0">自检有问题也可以照常开播。</p>
+</section>
+
+<!-- phase: Live -->
+<section id="phase-live" class="card hidden">
+  <h2>正在直播</h2>
+  <p class="title-big" id="live-title">—</p>
+  <div class="metrics" style="margin:10px 0 14px">
+    <div class="metric" id="m-time">—<span>已直播</span></div>
+    <div class="metric" id="m-bitrate">—<span>码率</span></div>
+    <div class="metric" id="m-dropped">—<span>丢帧</span></div>
+    <div class="metric" id="m-scene">—<span>当前画面</span></div>
+  </div>
+  <div class="stack">
+    <button id="btn-telegram">发送链接到 Telegram</button>
+    <button class="danger" id="btn-stop">结束直播</button>
+  </div>
+</section>
+
+<!-- scenes -->
+<section id="scene-card" class="card hidden">
+  <h2>切换画面</h2>
+  <div class="row" id="scene-buttons"></div>
+</section>
+
+<!-- slides -->
+<section id="slides-card" class="card hidden">
+  <h2>幻灯片 <span class="subtle" id="slide-pos"></span></h2>
+  <div class="slide-row">
+    <button id="btn-prev">◀ 上一页</button>
+    <button id="btn-next">下一页 ▶</button>
+  </div>
+</section>
+
+<!-- phase: Ended -->
+<section id="phase-ended" class="card hidden">
+  <h2>直播已结束</h2>
+  <p class="title-big" id="ended-title">—</p>
+  <button class="ghost" id="btn-another" style="margin-top:12px">开始另一场 →</button>
+</section>
+
+<!-- link: available from broadcast creation onward, not only while live -->
+<section id="link-card" class="card hidden">
+  <h2>直播链接</h2>
+  <div class="linkbox" id="watch-url"></div>
+  <button style="margin-top:10px" id="btn-copy">复制链接</button>
+  <p class="subtle" id="copy-hint" style="margin-bottom:0">复制不成功时，可长按上面的地址手动复制。</p>
+</section>
+
+<!-- template override -->
+<section id="picker-card" class="card hidden">
+  <h2>选择场次</h2>
+  <div class="stack" id="template-list"></div>
+  <label for="custom-title">或手填标题（临时直播）</label>
+  <input type="text" id="custom-title" placeholder="例如：8/5/2026 特别聚会">
+  <button style="margin-top:10px" id="btn-create-custom">用这个标题建播</button>
+  <button class="ghost" id="btn-picker-cancel">取消</button>
+</section>
+
+<section class="card">
+  <h2>状态</h2>
+  <p class="subtle" style="margin:0"><span class="dot" id="dot-obs"></span><span id="obs-text">OBS —</span></p>
+  <p class="subtle" style="margin:6px 0 0"><span class="dot" id="dot-auth"></span><span id="auth-text">授权 —</span></p>
+  <p class="subtle" id="last-action" style="margin:6px 0 0"></p>
+  <button class="ghost" id="btn-refresh" style="margin-top:10px">重新自检</button>
+  <button class="ghost" id="btn-settings">设置 →</button>
+</section>
+
+<div id="toast" class="hidden"></div>
+
+<script src="common.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
