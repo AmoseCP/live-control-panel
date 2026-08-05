@@ -39,13 +39,20 @@ public static class Seed
             Weekdays = new List<int> { 0 },
             StartTime = "10:30",
         },
-        // FR 3.1: a built-in blank template for ad-hoc streams. No weekdays, no start time, so it
-        // never matches automatically — it is only reachable through manual creation.
+        // FR 3.1: a built-in template for ad-hoc streams outside the fixed schedule. No weekdays and
+        // no start time, so it never matches automatically — it is only reachable through manual
+        // creation.
+        //
+        // It carries a name and the standard title format so an ad-hoc stream defaults to
+        // "8/5/2026 Service" from the server's date. The operator never types a date by hand:
+        // hand-typing invites "08/05/2026" (zero-padded, against FR 4.1) or the wrong day after
+        // midnight, and a title cannot be corrected once the broadcast exists. The title stays
+        // editable for anyone who wants something more specific.
         new ServiceTemplate
         {
             Id = CustomTemplateId,
-            Name = "",
-            TitleFormat = "",
+            Name = "Service",
+            TitleFormat = "{M}/{D}/{YYYY} {name}",
             Weekdays = new List<int>(),
             StartTime = null,
         },

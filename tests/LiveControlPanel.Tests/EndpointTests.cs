@@ -250,15 +250,55 @@ public sealed class EndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    /// <summary>
+    /// An ad-hoc stream with no title supplied defaults to "<date> Service" from this machine's
+    /// clock, so the operator never hand-types a date.
+    /// </summary>
     [Fact]
-    public async Task An_ad_hoc_stream_requires_a_title()
+    public async Task An_ad_hoc_stream_defaults_to_todays_date_plus_service()
     {
         var response = await _client.PostAsJsonAsync(
             $"/api/broadcast/create?k={_code}", new { templateId = "custom" });
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        var body = await response.Content.ReadFromJsonAsync<ApiResult>();
-        Assert.Contains("标题", body!.Message);
+        Assert.True(response.IsSuccessStatusCode);
+
+        var today = DateTime.Now;
+        var expected = $"{today.Month}/{today.Day}/{today.Year} Service";
+
+        var state = await _client.GetFromJsonAsync<RuntimeState>($"/api/state?k={_code}", Json.Options);
+        Assert.Equal(expected, state!.Today!.Title);
+    }
+
+    [Fact]
+    public async Task An_ad_hoc_title_can_be_overridden()
+    {
+        await _client.PostAsJsonAsync($"/api/broadcast/create?k={_code}",
+            new { templateId = "custom", title = "8/5/2026 特别聚会" });
+
+        var state = await _client.GetFromJsonAsync<RuntimeState>($"/api/state?k={_code}", Json.Options);
+        Assert.Equal("8/5/2026 特别聚会", state!.Today!.Title);
+    }
+
+    /// <summary>
+    /// The default title is rendered server-side. A tablet with a wrong date or time zone must not be
+    /// able to mint a title for the wrong day — a title cannot be corrected once the broadcast exists.
+    /// </summary>
+    [Fact]
+    public async Task The_template_list_supplies_a_server_rendered_default_title()
+    {
+        var response = await _client.GetAsync($"/api/templates/list?k={_code}");
+        var body = await response.Content.ReadAsStringAsync();
+
+        using var doc = System.Text.Json.JsonDocument.Parse(body);
+        var custom = doc.RootElement.EnumerateArray()
+            .Single(t => t.GetProperty("id").GetString() == "custom");
+
+        var today = DateTime.Now;
+        Assert.Equal($"{today.Month}/{today.Day}/{today.Year} Service",
+            custom.GetProperty("defaultTitle").GetString());
+
+        // Unpadded, per FR 4.1 — the exact mistake hand-typing would introduce.
+        Assert.DoesNotContain("/0", custom.GetProperty("defaultTitle").GetString()!);
     }
 
     // ---------------------------------------------------------------- slides

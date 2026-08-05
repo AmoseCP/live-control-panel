@@ -361,7 +361,13 @@
 
       host.innerHTML = '';
       result.data.forEach(function (template) {
-        if (!template.name) return;   // the blank built-in "custom" entry
+        // "custom" is not a scheduled service; it drives the ad-hoc field below instead.
+        // Its defaultTitle comes from the server's clock, never this device's.
+        if (template.id === 'custom') {
+          var input = document.getElementById('custom-title');
+          if (input && !input.value) input.value = template.defaultTitle || '';
+          return;
+        }
 
         var button = document.createElement('button');
         button.textContent = template.name + (template.startTime ? '　' + template.startTime : '');
@@ -385,6 +391,9 @@
     L.api.post('/api/broadcast/create', { templateId: 'custom', title: title }).then(function (result) {
       report(result);
       L.show('picker-card', false);
+      // Cleared so reopening the picker re-reads today's date from the server rather than
+      // reusing a title typed before midnight.
+      if (result.ok && input) input.value = '';
       refreshPreflight();
     });
   });

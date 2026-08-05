@@ -30,13 +30,34 @@ public class ConfigStoreTests : IDisposable
     }
 
     [Fact]
-    public void First_run_seeds_the_four_scheduled_services_plus_the_blank_custom_one()
+    public void First_run_seeds_the_four_scheduled_services_plus_the_ad_hoc_one()
     {
         var config = Open();
 
         Assert.Equal(4, config.SchedulableTemplates().Count());
         Assert.Equal(5, config.Templates.Count);
         Assert.Contains(config.Templates, t => t.Id == Seed.CustomTemplateId);
+    }
+
+    /// <summary>
+    /// The ad-hoc template carries a name and the standard format so an extra stream defaults to
+    /// "<date> Service" without the operator typing a date, yet still never matches automatically.
+    /// </summary>
+    [Fact]
+    public void The_ad_hoc_template_defaults_to_date_plus_service_but_never_auto_matches()
+    {
+        var custom = Open().FindTemplate(Seed.CustomTemplateId)!;
+
+        Assert.Equal("Service", custom.Name);
+        Assert.Equal("{M}/{D}/{YYYY} {name}", custom.TitleFormat);
+        Assert.Empty(custom.Weekdays);
+        Assert.Null(custom.StartTime);
+
+        // Same formatting path as the scheduled services, so the month/day are never zero-padded.
+        Assert.Equal("8/3/2026 Service",
+            Core.ScheduleMatcher.FormatTitle(custom, new DateTime(2026, 8, 3)));
+        Assert.Equal("12/25/2026 Service",
+            Core.ScheduleMatcher.FormatTitle(custom, new DateTime(2026, 12, 25)));
     }
 
     [Theory]

@@ -28,7 +28,7 @@
 
 ```bash
 # 需要 .NET 8 SDK
-dotnet test                                    # 224 个单元/接口测试
+dotnet test                                    # 227 个单元/接口测试
 dotnet run --project src/LiveControlPanel       # 默认 http://localhost:5088
 ```
 
@@ -128,7 +128,17 @@ tests/LiveControlPanel.Tests/
 
 相应地，`liveBroadcasts.insert` 的 `snippet.scheduledStartTime` 改为**实际按下开始的时刻**，而不是模板的名义时间。原因：`enableAutoStart=true`，整条编排从建播到 live 只有几十秒，18:25 才开播却告诉 YouTube「预定 18:00」，只会让观看页显示一个已经过去的时间。名义时间仍然用于场次匹配、标题生成，以及界面上的「预定开始 18:00」。
 
-### 4. 每周场次数：需求文档自身不一致
+### 4. 临时直播的默认标题由服务端按系统日期生成
+
+固定排期之外偶尔会有额外直播，走「手动选择一场」下半部分的临时直播入口（内置 `custom` 模板）。
+
+需求 3.1 写的是「各字段留空，供手填」，但让操作员手打整条标题会引入两类错误：日期补零成 `08/05/2026`（违反需求 4.1），以及跨零点后打错日期。**标题一旦建播就改不了。** 因此 `custom` 模板改为带 `name = "Service"` 与标准的 `titleFormat`，默认标题即 `8/5/2026 Service`，操作员按需修改。
+
+默认标题由 **`/api/templates/list` 在服务端渲染**（字段 `defaultTitle`），不在浏览器里算 —— iPad 的日期或时区设错时，不能让它造出错误日期的标题。走的是和固定场次完全同一条 `ScheduleMatcher.FormatTitle` 逻辑，所以月日永不补零。
+
+`custom` 仍然没有 `weekdays` 与 `startTime`，因此永不参与自动匹配；`scheduledStart` 取当下。Telegram 通知与固定场次一致，发往同一个群（需求 9：确认只需一个群）。
+
+### 5. 每周场次数：需求文档自身不一致
 
 需求 1 的正文写「每周七场」，但 3.1 的模板表（`weekdays` 是**必须**照抄的种子数据）实际是 **8 场**：
 
@@ -145,7 +155,7 @@ sunday-service    [0]         10:30  → 1
 
 > 这一处需要确认：是正文的「七场」笔误，还是排期表里某一场应当去掉。
 
-### 5. 端口 5088 在部分 Windows 上被系统占用
+### 6. 端口 5088 在部分 Windows 上被系统占用
 
 本机上 Hyper-V 保留了 4990–5089，绑定 5088 直接 `SocketException 10013`。默认值仍按需求保持 5088，但：
 
@@ -158,7 +168,7 @@ sunday-service    [0]         10:30  → 1
 
 ## 测试
 
-224 个测试，全部不接触真实的 YouTube / OBS / Telegram。
+227 个测试，全部不接触真实的 YouTube / OBS / Telegram。
 
 ```bash
 dotnet test
@@ -172,7 +182,7 @@ dotnet test
 | `NotificationTests` | Telegram 幂等、失败可重试、模板渲染 |
 | `ConfigStoreTests` | 种子数据、删目录后重建、损坏文件降级、访问码生成 |
 | `StateManagerTests` | 四相位状态机、快照深拷贝、并发安全 |
-| `EndpointTests` | 真实路由表 + 访问码/PIN 门禁 + 各接口契约 |
+| `EndpointTests` | 真实路由表 + 访问码/PIN 门禁 + 各接口契约 + 临时直播默认标题 |
 | `SupportingTests` | obs v5 认证算法、虚拟网卡过滤、错误文案不含技术术语、重试策略、窗口匹配 |
 
 ### 已验证的行为

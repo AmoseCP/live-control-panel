@@ -289,7 +289,10 @@
       body.innerHTML = '';
       result.data.forEach(function (template) {
         var row = document.createElement('tr');
-        [template.name || '（临时）', (template.weekdays || []).join(','), template.startTime || '—']
+        var name = template.id === 'custom'
+          ? (template.name || '') + '（临时直播，不参与自动匹配）'
+          : template.name;
+        [name, (template.weekdays || []).join(','), template.startTime || '—']
           .forEach(function (cell) {
             var td = document.createElement('td');
             td.textContent = cell;

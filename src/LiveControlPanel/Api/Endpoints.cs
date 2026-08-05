@@ -291,8 +291,19 @@ public static class Endpoints
                 : PinRequired());
 
         // Unprotected read for the operator page's "不是这一场？" list: names and times only.
+        //
+        // defaultTitle is rendered here rather than in the browser so the date comes from this PC's
+        // clock. An iPad with the wrong date or time zone must not be able to mint a wrong title —
+        // and a title cannot be changed once the broadcast is created.
         app.MapGet("/api/templates/list", (ConfigStore config) => Results.Json(
-            config.Templates.Select(t => new { t.Id, t.Name, t.StartTime, t.Weekdays }), Json.Options));
+            config.Templates.Select(t => new
+            {
+                t.Id,
+                t.Name,
+                t.StartTime,
+                t.Weekdays,
+                DefaultTitle = ScheduleMatcher.FormatTitle(t, DateTime.Now),
+            }), Json.Options));
 
         app.MapPut("/api/templates", (
             List<ServiceTemplate> body, ConfigStore config, AccessGate gate, HttpContext context) =>
