@@ -211,6 +211,34 @@ public static class Program
             log.LogWarning("Settings were created fresh. Access code: {Code}  Settings PIN: {Pin}",
                 config.Settings.AccessCode, config.Settings.SettingsPin);
         }
+
+        WarnIfSessionIsolated(log);
+    }
+
+    /// <summary>
+    /// Slide control reaches the presentation program through window handles and the COM
+    /// running-object table, and both are per-session. Running in session 0 — which is what hosting
+    /// this as a Windows service means — leaves paging permanently unable to find the WPS window,
+    /// with no error anywhere. That is the one failure an operator alone at 04:40 cannot diagnose, so
+    /// it gets stated loudly at startup instead.
+    /// </summary>
+    private static void WarnIfSessionIsolated(Microsoft.Extensions.Logging.ILogger log)
+    {
+        int sessionId;
+        try { sessionId = System.Diagnostics.Process.GetCurrentProcess().SessionId; }
+        catch (Exception) { return; }
+
+        if (sessionId != 0)
+        {
+            log.LogInformation("Running in session {SessionId}; slide control can reach the desktop.", sessionId);
+            return;
+        }
+
+        log.LogWarning(
+            "Running in session 0 (the Windows service session). Slide paging, the page counter and " +
+            "the next-slide preview CANNOT work from here: window handles and the COM running-object " +
+            "table are per-session, so the WPS slide-show window is unreachable. Start this program " +
+            "at user logon instead (see the README). OBS, YouTube and Telegram are unaffected.");
     }
 }
 

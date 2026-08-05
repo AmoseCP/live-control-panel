@@ -22,6 +22,12 @@ public sealed class AppPaths
     public string ThumbnailsDirectory => Path.Combine(Root, "thumbnails");
     public string LogDirectory => Path.Combine(Root, "logs");
 
+    /// <summary>
+    /// Scratch space for slide previews. COM's Export only writes to a file, so a rendered slide
+    /// lands here before being served. Contents are disposable.
+    /// </summary>
+    public string PreviewDirectory => Path.Combine(Root, "preview");
+
     /// <summary>Resolves a settings-relative path (e.g. "thumbnails/default.jpg") against the data root.</summary>
     public string Resolve(string relativeOrAbsolute) =>
         Path.IsPathRooted(relativeOrAbsolute)
@@ -33,5 +39,6 @@ public sealed class AppPaths
         Directory.CreateDirectory(Root);
         Directory.CreateDirectory(ThumbnailsDirectory);
         Directory.CreateDirectory(LogDirectory);
+        Directory.CreateDirectory(PreviewDirectory);
     }
 }

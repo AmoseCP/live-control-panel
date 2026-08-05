@@ -84,9 +84,35 @@ public sealed class StubSlideController : ISlideController
     public List<string> Calls { get; } = new();
     public bool GotoSucceeds { get; set; } = true;
 
+    /// <summary>Null models a presentation program with no way to render a slide — e.g. WPS without export.</summary>
+    public SlidePreview? Preview { get; set; }
+
+    public List<int?> PreviewRequests { get; } = new();
+
     public IReadOnlyList<WindowInfo> EnumerateWindows() => Array.Empty<WindowInfo>();
 
     public SlidesState GetState() => State;
+
+    public SlidePreview? TryGetPreview(int? slideNumber)
+    {
+        PreviewRequests.Add(slideNumber);
+        return Preview;
+    }
+
+    public SlideDiagnostics Diagnose() => new(
+        SessionId: 1,
+        SessionIsolated: false,
+        ComProgId: "PowerPoint.Application",
+        SlideShowRunning: true,
+        Current: State.Current,
+        Total: State.Total,
+        PreviewSupported: Preview is not null,
+        TargetWindowFound: true,
+        Strategy: "PostMessage",
+        Message: null,
+        Culture: "en-US (LCID 1033)");
+
+    public string ProbeCom() => "stub";
 
     public SlideResult Next() { Calls.Add("next"); return new SlideResult(true, "已发送下一页。"); }
 

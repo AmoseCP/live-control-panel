@@ -7,7 +7,15 @@
     <RootNamespace>LiveControlPanel</RootNamespace>
     <AssemblyName>LiveControlPanel</AssemblyName>
     <OutputType>Exe</OutputType>
-    <InvariantGlobalization>true</InvariantGlobalization>
+    <!--
+      Must stay false. Late-bound COM access to the presentation program passes
+      CultureInfo.CurrentCulture's LCID to IDispatch::GetIDsOfNames; under invariant globalization
+      that is the invariant culture (LCID 127), which Office rejects with DISP_E_UNKNOWNNAME for
+      valid members. Together with the IDispatch marshalling in WpsCom this is what makes the page
+      counter and the next-slide preview work at all. Date formatting is unaffected — the places
+      that matter pin InvariantCulture explicitly.
+    -->
+    <InvariantGlobalization>false</InvariantGlobalization>
     <!-- wwwroot is embedded so the single-file exe needs no companion folder. -->
     <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>

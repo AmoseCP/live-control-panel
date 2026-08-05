@@ -163,6 +163,17 @@ public static class Endpoints
 
         app.MapPost("/api/slides/goto", (GotoRequest body, ISlideController slides, StateManager state) =>
             SlideResponse(slides.Goto(body.Slide), state));
+
+        // Next-slide preview. 404 when the presentation program exposes no way to render a slide —
+        // the operator page hides the preview block on failure rather than showing a broken image.
+        app.MapGet("/api/slides/preview", (ISlideController slides, int? n) =>
+        {
+            var preview = slides.TryGetPreview(n);
+            if (preview is null) return Results.NotFound();
+
+            return Results.File(preview.Png, "image/png",
+                lastModified: null, entityTag: null, enableRangeProcessing: false);
+        });
     }
 
     private static IResult SlideResponse(SlideResult result, StateManager state)
@@ -358,6 +369,21 @@ public static class Endpoints
         app.MapGet("/api/diag/windows", (ISlideController slides, AccessGate gate, HttpContext context) =>
             gate.IsValidPin(context)
                 ? Results.Json(slides.EnumerateWindows(), Json.Options)
+                : PinRequired());
+
+        // FR 5.3's optional COM layer only claims PowerPoint compatibility in WPS, and window
+        // handles plus the COM running-object table are per-session. Both questions are answered
+        // here, on the machine that matters, instead of being assumed.
+        app.MapGet("/api/diag/slides", (ISlideController slides, AccessGate gate, HttpContext context) =>
+            gate.IsValidPin(context)
+                ? Results.Json(slides.Diagnose(), Json.Options)
+                : PinRequired());
+
+        // Walks the automation chain member by member and names the step that fails. This is how the
+        // WPS question gets answered on the church PC without guessing from documentation.
+        app.MapGet("/api/diag/com-probe", (ISlideController slides, AccessGate gate, HttpContext context) =>
+            gate.IsValidPin(context)
+                ? Results.Text(slides.ProbeCom())
                 : PinRequired());
 
         app.MapGet("/api/diag/obs-inputs", async (

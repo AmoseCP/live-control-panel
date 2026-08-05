@@ -28,7 +28,7 @@
 
 ```bash
 # 需要 .NET 8 SDK
-dotnet test                                    # 228 个单元/接口测试
+dotnet test                                    # 233 个单元/接口测试
 dotnet run --project src/LiveControlPanel       # 默认 http://localhost:5088
 ```
 
@@ -48,15 +48,27 @@ dotnet publish src/LiveControlPanel -c Release
 
 得到一个**自包含单文件 exe**（约 46 MB），目标机器**无需安装 .NET**。`wwwroot` 已嵌入程序集，所以只复制这一个 exe 就能运行 —— 已验证。
 
-### 注册为 Windows 服务
+### 随用户登录启动（**不要**装成 Windows 服务）
 
 ```powershell
-New-Service -Name LiveControlPanel -BinaryPathName "C:\LiveControlPanel\LiveControlPanel.exe" -StartupType Automatic
-sc.exe failure LiveControlPanel reset= 86400 actions= restart/5000/restart/5000/restart/5000
-Start-Service LiveControlPanel
+# 计划任务：用户登录时启动，崩溃后由任务计划重启
+$action  = New-ScheduledTaskAction -Execute "C:\LiveControlPanel\LiveControlPanel.exe"
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:COMPUTERNAME\<操作账号>"
+$set     = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
+             -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName LiveControlPanel -Action $action -Trigger $trigger -Settings $set -RunLevel Highest
 ```
 
-**服务必须在用户登录前启动** —— 这样 OBS 一启动，它的浏览器停靠面板就能直接加载成功，不会出现错误页。
+**这一点与需求 2 不同，原因是硬性的。** 需求 2 要求托管为 Windows 服务，需求 5.3 要求用 Win32 控制 WPS 放映窗口 —— **两者不能同时成立**：
+
+- Windows 服务运行在**会话 0**，WPS 与 OBS 运行在操作员的**会话 1**（本机实测：`services.exe`/`svchost` 在 0，`explorer`/`OBS` 在 1）
+- 窗口句柄与 COM 运行对象表（ROT）都**按会话隔离**，所以从会话 0 既找不到放映窗口，也 attach 不到 WPS
+
+装成服务的后果：**翻页、页码、下一页预览全部静默失效**（OBS / YouTube / Telegram 不受影响，它们走 TCP/HTTP）。需求 5.3 说翻页是 iPad 方案成立的前提，这条会在凌晨无声失效。
+
+因此程序**启动时会检测自身会话**，若在会话 0 会在日志里明确写出来，而不是让它悄悄不工作。
+
+需求 2 想要的「OBS 启动时面板已就绪」仍然满足：M7.3 本来就要求开启 **Windows 自动登录**，机器开机后自动进入桌面，面板随登录启动且 Kestrel 绑定只要一秒，早于 OBS 初始化其浏览器停靠面板。
 
 ---
 
@@ -138,7 +150,29 @@ tests/LiveControlPanel.Tests/
 
 `custom` 仍然没有 `weekdays` 与 `startTime`，因此永不参与自动匹配；`scheduledStart` 取当下。Telegram 通知与固定场次一致，发往同一个群（需求 9：确认只需一个群）。
 
-### 5. 每周场次数：需求文档自身不一致
+### 5. 幻灯片控制：改为「自动化接口优先，按键为回退」，并新增下一页预览
+
+需求 5.3 把 `PostMessage` 定向按键定为基线。**在 PowerPoint 16 上实测，按键两条路都不工作：**
+
+| 方式 | 实测结果 |
+| --- | --- |
+| `PostMessage(WM_KEYDOWN, VK_RIGHT)` | 接口返回成功，但幻灯片**不动** —— 放映窗口忽略投递的按键消息 |
+| `SendInput` | 同样不动。`SetForegroundWindow` 在后台进程里被 Windows 的前台锁拒绝，按键落到了别的窗口 |
+| COM `View.Next()` / `Previous()` / `GotoSlide(n)` | **每次都成功**，不需要焦点，还能读回当前页码 |
+
+所以 `SlideController` 改为**先走 COM，失败再退回按键**。需求 5.3 的按键实现完整保留 —— WPS 若没有自动化接口，它就是唯一的路。需求本身也预留了这个可能（「部分应用使用 raw input，`PostMessage` 可能无效，故必须保留回退」），实测证实了这一点，只是可用的那条路和文档假设的相反。
+
+**下一页预览**（新增）：`GET /api/slides/preview[?n=]` 用 COM 的 `Slides.Item(n).Export` 渲染 PNG。COM 不可用时返回 404，前端据此隐藏整块，不显示坏图。实测延迟：进程内首次约 2.1 秒（一次性 COM/JIT 预热），之后同页命中 10 秒 memo 约 16ms，换页重新导出约 30ms。
+
+#### 两个必须同时满足的前提（各花了不少时间才定位）
+
+**（a）`GetActiveObject` 的出参必须按 `IDispatch` 封送，不能用 `IUnknown`。** 用 `IUnknown` 时 .NET 8 给出的 RCW 没接上 IDispatch 后期绑定，取任何成员都是 `DISP_E_UNKNOWNNAME`，尽管对象本身是对的。.NET Framework 在这里更宽容 —— 同样的写法在 PowerShell 里能跑，所以很容易误判成「平台不支持」。
+
+**（b）`Presentation` 挂在 `SlideShowWindow` 上，不在 `View` 上。** 读 `View.Presentation` 会 `DISP_E_UNKNOWNNAME`。
+
+`GET /api/diag/com-probe` 就是为定位这类问题加的：它逐个成员走完整条链并指出断在哪一步。上线时在教会那台机器上让 WPS 进入放映后调用一次，就能确定 WPS 支持到哪一层，不必靠文档猜。
+
+### 6. 每周场次数：需求文档自身不一致
 
 需求 1 的正文写「每周七场」，但 3.1 的模板表（`weekdays` 是**必须**照抄的种子数据）实际是 **8 场**：
 
@@ -155,7 +189,7 @@ sunday-service    [0]         10:30  → 1
 
 > 这一处需要确认：是正文的「七场」笔误，还是排期表里某一场应当去掉。
 
-### 6. 端口 5088 在部分 Windows 上被系统占用
+### 7. 端口 5088 在部分 Windows 上被系统占用
 
 本机上 Hyper-V 保留了 4990–5089，绑定 5088 直接 `SocketException 10013`。默认值仍按需求保持 5088，但：
 
@@ -168,7 +202,7 @@ sunday-service    [0]         10:30  → 1
 
 ## 测试
 
-228 个测试，全部不接触真实的 YouTube / OBS / Telegram。
+233 个测试，全部不接触真实的 YouTube / OBS / Telegram。
 
 ```bash
 dotnet test
@@ -184,6 +218,7 @@ dotnet test
 | `StateManagerTests` | 四相位状态机、快照深拷贝、并发安全 |
 | `EndpointTests` | 真实路由表 + 访问码/PIN 门禁 + 各接口契约 + 临时直播默认标题 |
 | `SupportingTests` | obs v5 认证算法、虚拟网卡过滤、错误文案不含技术术语、重试策略、窗口匹配 |
+| `EndpointTests`（幻灯片部分） | 预览返回 PNG、COM 不可用时 404、显式页码透传、访问码门禁、诊断接口需 PIN |
 
 ### 已验证的行为
 
@@ -196,6 +231,10 @@ dotnet test
 - `/api/diag/windows` 真实枚举到顶层窗口
 - `/api/access-info` 只列出真实 Wi-Fi 地址（172.16.x.x），过滤掉环回与虚拟网卡，并给出 mDNS 名与二维码
 - 排期匹配：周三 11:48 → `NoSchedule` + 下一场为当日 18:00 Wednesday Service（正是需求 M1.3 的判据之一）
+- 幻灯片：面板作为**独立进程** attach 到另行启动的 PowerPoint 放映（`POWERPNT.EXE /S deck.pptx`），
+  `next` 1→2→3→4、`prev` 4→3→2、`goto 4` 全部生效，页码经 `/api/state` 读回一致
+- 下一页预览：`/api/slides/preview` 返回有效 PNG；越界页码返回 404；预览在界面上正确显示为「下一页（第 N 页）」
+- 会话隔离：实测服务进程在会话 0、桌面应用在会话 1，据此改为随登录启动并加了启动检测
 
 ### 两个测试找出来的真实缺陷
 
@@ -221,13 +260,16 @@ dotnet test
 | POST | `/api/broadcast/end-previous` | 结束遗留的上一场 |
 | POST | `/api/broadcast/start-another` | 清空状态以开始一日中的第二场 |
 | POST | `/api/obs/scene` | 切换场景 |
-| POST | `/api/slides/next` \| `/prev` \| `/goto` | 幻灯片控制 |
+| POST | `/api/slides/next` \| `/prev` \| `/goto` | 幻灯片控制（先走 COM，失败退回按键） |
+| GET | `/api/slides/preview` | 下一页预览 PNG；COM 不可用时 404 |
 | POST | `/api/telegram/send` | 发送通知（幂等） |
 | GET | `/api/access-info` | 局域网地址、mDNS 名、二维码 |
 | GET | `/auth/start` \| `/auth/callback` | OAuth 授权 |
 | GET/PUT | `/api/settings` \| `/api/templates` | 设置（需 PIN） |
 | POST | `/api/stream-key/create` | 创建可复用推流密钥（一次性，需 PIN） |
 | GET | `/api/diag/windows` | 枚举顶层窗口，用于确定 WPS 放映窗口（需 PIN） |
+| GET | `/api/diag/slides` | 会话号、COM 可用性、当前/总页数、预览是否可用（需 PIN） |
+| GET | `/api/diag/com-probe` | 逐个成员走完自动化对象链，指出断在哪一步（需 PIN） |
 
 ---
 
@@ -246,13 +288,17 @@ dotnet test
 6. 设置页填 Client ID / Secret → 「开始授权」
 7. 设置页「创建可复用推流密钥」→ 把串流密钥填进 OBS（**此后永不再改**）
 8. 设置页填 Telegram token 与 chat_id → 「发送测试消息」确认
-9. 让 WPS 进入全屏放映 → 设置页「列出所有窗口」→ 点中放映窗口填入类名 → 保存
+9. 让 WPS 进入全屏放映，然后**调用 `GET /api/diag/com-probe`** 确认 WPS 的自动化接口支持到哪一层。
+   若整条链到 `Slide.Export` 都通过，翻页走 COM、页码与下一页预览都可用；
+   若在中途断掉，翻页会退回按键 —— 此时必须在设置页「列出所有窗口」里选中放映窗口填入类名，
+   并实测按 `PostMessage` 能否真的翻页，不行就把 `strategy` 改成 `SendInput`（会短暂抢焦点）
 10. 设置页填 `obs.videoSourceNames`（采集卡、电视采集源的名字），让 `video` 自检生效
 
 **系统配套**
 
-11. 防火墙放行端口 5088，**规则须同时覆盖「专用」与「公用」**（教会 WiFi 的网络配置文件分类可能变化）
-12. Windows 自动登录（配合 UPS，断电重启后自动恢复）
+11. 防火墙放行端口 5088，**规则须同时覆盖「专用」与「公用」**（教会 WiFi 的网络配置文件分类可能变化）；
+    先用 `netsh interface ipv4 show excludedportrange protocol=tcp` 确认 5088 没被系统保留
+12. Windows 自动登录（配合 UPS，断电重启后自动恢复）—— **这是面板随登录启动方案的前提**
 13. Windows Update「使用时间」覆盖 **04:00–20:00** —— 默认会在凌晨装更新并重启，正好撞上 04:40 的场次
 14. OBS 开机自启，浏览器停靠面板指向 `http://localhost:5088/?k=<访问码>`（`localhost` 属安全上下文，剪贴板 API 可用）
 

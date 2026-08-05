@@ -72,6 +72,11 @@
 <!-- slides -->
 <section id="slides-card" class="card hidden">
   <h2>幻灯片 <span class="subtle" id="slide-pos"></span></h2>
+  <!-- Hidden unless the presentation program can actually render a slide image. -->
+  <figure id="slide-preview" class="hidden">
+    <img id="slide-preview-img" alt="下一页预览">
+    <figcaption class="subtle" id="slide-preview-caption">下一页</figcaption>
+  </figure>
   <div class="slide-row">
     <button id="btn-prev">◀ 上一页</button>
     <button id="btn-next">下一页 ▶</button>

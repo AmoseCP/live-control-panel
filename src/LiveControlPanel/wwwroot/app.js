@@ -237,11 +237,56 @@
     });
   }
 
+  var previewShownFor = null;
+
   function renderSlides() {
     var slides = state.slides || {};
     L.text('slide-pos', slides.current && slides.total
       ? '第 ' + slides.current + ' / ' + slides.total + ' 页'
       : '');
+
+    refreshPreview(slides);
+  }
+
+  /*
+   * Next-slide preview. Only attempted when COM reported a position, and only re-fetched when the
+   * page actually changed — a preview refresh must not become a periodic redraw (FR 2.2).
+   * On any failure the block is hidden rather than left showing a stale or broken image.
+   */
+  function refreshPreview(slides) {
+    if (!slides.current || !slides.total) {
+      previewShownFor = null;
+      L.show('slide-preview', false);
+      return;
+    }
+
+    var next = slides.current + 1;
+    if (next > slides.total) {
+      previewShownFor = null;
+      L.show('slide-preview', false);
+      L.text('slide-preview-caption', '');
+      return;
+    }
+
+    if (previewShownFor === next) return;
+    previewShownFor = next;
+
+    var image = document.getElementById('slide-preview-img');
+    if (!image) return;
+
+    // Cache-bust per slide so a page turn always fetches the right frame.
+    var url = '/api/slides/preview?n=' + next + '&k=' + encodeURIComponent(L.code);
+
+    image.onload = function () {
+      L.show('slide-preview', true);
+      L.text('slide-preview-caption', '下一页（第 ' + next + ' 页）');
+    };
+    image.onerror = function () {
+      // 404 = this presentation program cannot render a slide image. Stay hidden.
+      previewShownFor = null;
+      L.show('slide-preview', false);
+    };
+    image.src = url;
   }
 
   function renderStatus() {

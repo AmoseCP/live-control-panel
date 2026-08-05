@@ -83,6 +83,22 @@ button.ghost { background: transparent; min-height: 48px; font-weight: 500; colo
 .slide-row { display: flex; gap: 10px; }
 .slide-row button { min-height: 96px; font-size: 1.25rem; }
 
+/* Next-slide preview. Fixed aspect box so the layout does not jump between page turns —
+   FR 2.2 rules out anything that reflows or animates during a service. */
+#slide-preview { margin: 0 0 12px; }
+
+#slide-preview img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  background: #000;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+#slide-preview figcaption { margin-top: 6px; }
+
 /* ---- status ---- */
 
 .metrics { display: flex; flex-wrap: wrap; gap: 8px 18px; }

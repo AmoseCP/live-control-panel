@@ -333,6 +333,81 @@ public sealed class EndpointTests : IAsyncLifetime
         Assert.Equal(new[] { "next", "prev", "goto:12" }, _fixtures.Slides.Calls.ToArray());
     }
 
+    // ---------------------------------------------------------------- slide preview
+
+    [Fact]
+    public async Task The_preview_returns_a_png_of_the_next_slide()
+    {
+        var png = new byte[] { 0x89, 0x50, 0x4E, 0x47, 1, 2, 3 };
+        _fixtures.Slides.Preview = new SlidePreview(png, 8, 24);
+
+        var response = await _client.GetAsync($"/api/slides/preview?k={_code}");
+
+        Assert.True(response.IsSuccessStatusCode);
+        Assert.Equal("image/png", response.Content.Headers.ContentType!.MediaType);
+        Assert.Equal(png, await response.Content.ReadAsByteArrayAsync());
+    }
+
+    /// <summary>
+    /// WPS may not support rendering a slide at all. A 404 is the signal the operator page uses to
+    /// hide the preview block, so it must not be an error page or an empty 200.
+    /// </summary>
+    [Fact]
+    public async Task The_preview_returns_404_when_the_program_cannot_render_a_slide()
+    {
+        _fixtures.Slides.Preview = null;
+
+        var response = await _client.GetAsync($"/api/slides/preview?k={_code}");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task The_preview_passes_through_an_explicit_slide_number()
+    {
+        _fixtures.Slides.Preview = new SlidePreview(new byte[] { 1 }, 12, 24);
+
+        await _client.GetAsync($"/api/slides/preview?n=12&k={_code}");
+        await _client.GetAsync($"/api/slides/preview?k={_code}");
+
+        // Explicit number forwarded; omitting it asks the controller for "the next slide".
+        Assert.Equal(new int?[] { 12, null }, _fixtures.Slides.PreviewRequests.ToArray());
+    }
+
+    [Fact]
+    public async Task The_preview_is_behind_the_access_code()
+    {
+        _fixtures.Slides.Preview = new SlidePreview(new byte[] { 1 }, 8, 24);
+
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await _client.GetAsync("/api/slides/preview")).StatusCode);
+    }
+
+    // ---------------------------------------------------------------- slide diagnostics
+
+    [Fact]
+    public async Task Slide_diagnostics_need_the_pin_and_report_every_capability()
+    {
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await _client.GetAsync($"/api/diag/slides?k={_code}")).StatusCode);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/diag/slides?k={_code}");
+        request.Headers.Add(AccessGate.PinHeader, _pin);
+        var response = await _client.SendAsync(request);
+
+        Assert.True(response.IsSuccessStatusCode);
+
+        using var doc = System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        foreach (var field in new[]
+                 {
+                     "sessionId", "sessionIsolated", "comProgId", "slideShowRunning",
+                     "current", "total", "previewSupported", "targetWindowFound", "strategy",
+                 })
+        {
+            Assert.True(doc.RootElement.TryGetProperty(field, out _), $"missing field: {field}");
+        }
+    }
+
     // ---------------------------------------------------------------- access info
 
     [Fact]
