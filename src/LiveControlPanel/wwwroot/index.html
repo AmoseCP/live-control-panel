@@ -15,10 +15,17 @@
 
 <h1>直播控制面板</h1>
 
-<!-- phase: NoSchedule -->
+<!--
+  phase: NoSchedule. Two different situations share this phase and must not share wording:
+  a service is coming later today (just not inside its window yet), or there is genuinely
+  nothing scheduled. "本日无排期" in front of an operator who arrived early reads as
+  "you have the wrong day".
+-->
 <section id="phase-noschedule" class="card hidden">
-  <h2>本日无排期</h2>
+  <h2 id="noschedule-heading">本日无排期</h2>
+  <p class="title-big" id="noschedule-title"></p>
   <p id="next-service" class="subtle">正在读取下一场时间…</p>
+  <button class="hidden" id="btn-prepare-now" style="margin-top:12px">现在就开始准备</button>
   <button class="ghost" id="btn-pick-other">手动选择一场 →</button>
 </section>
 

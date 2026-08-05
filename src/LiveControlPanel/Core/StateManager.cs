@@ -118,7 +118,12 @@ public sealed class StateManager
             var next = ScheduleMatcher.NextService(templates, now);
             _state.NextService = next is null
                 ? null
-                : new NextServiceState { Title = next.Title, StartsAt = next.ScheduledStart };
+                : new NextServiceState
+                {
+                    Title = next.Title,
+                    StartsAt = next.ScheduledStart,
+                    TemplateId = next.Template.Id,
+                };
         }
         else
         {

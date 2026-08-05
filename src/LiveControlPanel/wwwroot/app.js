@@ -86,12 +86,7 @@
       L.text('ended-title', state.today.title);
     }
 
-    if (state.nextService) {
-      L.text('next-service', '下一场：' + state.nextService.title +
-        '，' + formatWhen(state.nextService.startsAt));
-    } else if (phase === 'NoSchedule') {
-      L.text('next-service', '未来两周没有排期。');
-    }
+    if (phase === 'NoSchedule') renderNoSchedule();
 
     if (broadcast && broadcast.watchUrl) L.text('watch-url', broadcast.watchUrl);
 
@@ -102,6 +97,64 @@
     renderSlides();
     renderStatus();
     renderTelegramButton();
+  }
+
+  /*
+   * "Nothing scheduled" and "not time yet" are different situations. An operator who turned up two
+   * hours early for a service that is definitely happening must not be told 本日无排期 — at 04:40,
+   * alone, that reads as "you came on the wrong day".
+   *
+   * Uses serverTime, not the device clock: an iPad with a wrong date must not change which day the
+   * panel thinks it is.
+   */
+  function renderNoSchedule() {
+    var next = state.nextService;
+
+    if (!next || !next.startsAt) {
+      L.text('noschedule-heading', '本日无排期');
+      L.text('noschedule-title', '');
+      L.text('next-service', '未来两周没有排期。');
+      L.show('btn-prepare-now', false);
+      return;
+    }
+
+    if (!isSameDayAsServer(next.startsAt)) {
+      // Either a day with no services at all, or today's service has already gone past its window.
+      L.text('noschedule-heading', '本日无排期');
+      L.text('noschedule-title', '');
+      L.text('next-service', '下一场：' + next.title + '，' + formatWhen(next.startsAt));
+      L.show('btn-prepare-now', false);
+      return;
+    }
+
+    L.text('noschedule-heading', '还没到时间');
+    L.text('noschedule-title', next.title);
+    L.text('next-service',
+      '今天 ' + L.clockTime(next.startsAt) + ' 开始' + untilText(next.startsAt) + '。到时间会自动就绪。');
+
+    var prepare = document.getElementById('btn-prepare-now');
+    if (prepare) {
+      prepare.classList.toggle('hidden', !next.templateId);
+      prepare.dataset.templateId = next.templateId || '';
+    }
+  }
+
+  function isSameDayAsServer(iso) {
+    var when = new Date(iso);
+    var server = new Date(state.serverTime);
+    if (isNaN(when.getTime()) || isNaN(server.getTime())) return false;
+    return when.toDateString() === server.toDateString();
+  }
+
+  /** Coarse on purpose — state arrives every few seconds, so this must not look like a live clock. */
+  function untilText(iso) {
+    var minutes = Math.round((new Date(iso) - new Date(state.serverTime)) / 60000);
+    if (isNaN(minutes) || minutes <= 0) return '';
+    if (minutes < 60) return '，还有约 ' + minutes + ' 分钟';
+
+    var hours = Math.floor(minutes / 60);
+    var rest = minutes % 60;
+    return '，还有约 ' + hours + ' 小时' + (rest > 0 ? ' ' + rest + ' 分钟' : '');
   }
 
   function formatWhen(iso) {
@@ -389,6 +442,18 @@
 
   L.on('btn-another', function () {
     L.api.post('/api/broadcast/start-another').then(function (result) {
+      report(result);
+      refreshPreflight();
+    });
+  });
+
+  // One tap from "not time yet" into Ready, instead of picker → find the service → tap.
+  L.on('btn-prepare-now', function () {
+    var button = document.getElementById('btn-prepare-now');
+    var templateId = button && button.dataset.templateId;
+    if (!templateId) { L.toast('暂时无法确定是哪一场，请用「手动选择一场」。', 'bad'); return; }
+
+    L.api.post('/api/broadcast/create', { templateId: templateId }).then(function (result) {
       report(result);
       refreshPreflight();
     });

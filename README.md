@@ -28,7 +28,7 @@
 
 ```bash
 # 需要 .NET 8 SDK
-dotnet test                                    # 249 个单元/接口测试
+dotnet test                                    # 250 个单元/接口测试
 dotnet run --project src/LiveControlPanel       # 默认 http://localhost:5088
 ```
 
@@ -147,6 +147,18 @@ tests/LiveControlPanel.Tests/
 
 超出窗口（例如迟到 3 小时）仍按需求 6.1 落到「本日无排期 + 下一场时间 + 手动选择入口」，由操作员手动选择场次，不做额外猜测。
 
+**但「还没到时间」与「今天真的没有」分开措辞。** 需求 6.1 对 `NoSchedule` 只规定了一种文案，而这个相位实际涵盖两种完全不同的情形。提前到场的操作员（15:30 等 18:00 的场，或 03:00 等 04:40 的场）看到「本日无排期」，会以为自己记错了日子 —— 与事实正好相反。因此当下一场就在今天时，改为：
+
+```
+还没到时间
+8/5/2026 Wednesday Service
+今天 18:00 开始，还有约 2 小时 26 分钟。到时间会自动就绪。
+[ 现在就开始准备 ]
+[ 手动选择一场 → ]
+```
+
+「现在就开始准备」一键进入 Ready（`NextServiceState` 新增 `templateId`，前端才知道该开哪一场，不必走选择器）。今天确实没有排期、或今天的场次已过窗口时，文案仍是「本日无排期 + 下一场」。判断"是否今天"用的是 `serverTime` 而非设备时钟 —— 理由与临时直播标题相同。
+
 相应地，`liveBroadcasts.insert` 的 `snippet.scheduledStartTime` 改为**实际按下开始的时刻**，而不是模板的名义时间。原因：`enableAutoStart=true`，整条编排从建播到 live 只有几十秒，18:25 才开播却告诉 YouTube「预定 18:00」，只会让观看页显示一个已经过去的时间。名义时间仍然用于场次匹配、标题生成，以及界面上的「预定开始 18:00」。
 
 ### 4. 临时直播的默认标题由服务端按系统日期生成
@@ -215,7 +227,7 @@ sunday-service    [0]         10:30  → 1
 
 ## 测试
 
-249 个测试，全部不接触真实的 YouTube / OBS / Telegram。
+250 个测试，全部不接触真实的 YouTube / OBS / Telegram。
 
 ```bash
 dotnet test

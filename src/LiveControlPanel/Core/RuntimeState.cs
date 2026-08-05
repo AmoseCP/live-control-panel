@@ -37,6 +37,12 @@ public sealed class NextServiceState
 {
     public string? Title { get; set; }
     public DateTime? StartsAt { get; set; }
+
+    /// <summary>
+    /// Which template it is, so an operator who arrived early can start preparing that service in one
+    /// tap instead of going through the picker.
+    /// </summary>
+    public string? TemplateId { get; set; }
 }
 
 public sealed class BroadcastState

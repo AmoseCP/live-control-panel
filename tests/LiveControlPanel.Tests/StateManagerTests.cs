@@ -86,6 +86,30 @@ public class StateManagerTests
         Assert.NotNull(state.NextService!.StartsAt);
     }
 
+    /// <summary>
+    /// The next service carries its template id so the "not time yet" screen can put the operator
+    /// into Ready in one tap rather than sending them through the picker.
+    /// </summary>
+    [Fact]
+    public void Next_service_reports_which_template_it_is()
+    {
+        using var host = new TestHost();
+        host.Config.SaveTemplates(host.Config.Templates
+            .Select(t =>
+            {
+                var clone = t.Clone();
+                if (clone.Weekdays.Count > 0) clone.Weekdays = new List<int> { ((int)DateTime.Now.DayOfWeek + 3) % 7 };
+                return clone;
+            })
+            .ToList());
+
+        var next = host.State.Snapshot().NextService;
+
+        Assert.NotNull(next);
+        Assert.False(string.IsNullOrWhiteSpace(next!.TemplateId));
+        Assert.NotNull(host.Config.FindTemplate(next.TemplateId!));
+    }
+
     [Fact]
     public void Next_service_is_cleared_once_a_service_matches()
     {
