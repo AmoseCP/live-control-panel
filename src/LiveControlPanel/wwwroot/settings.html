@@ -16,7 +16,11 @@
   <h2>请输入设置密码</h2>
   <input type="password" id="pin" inputmode="numeric" autocomplete="off" placeholder="四到六位数字">
   <button class="primary" id="btn-unlock" style="margin-top:10px">解锁</button>
-  <p class="subtle" style="margin-bottom:0">忘记密码请查看服务器上的 settings.json。</p>
+  <p class="subtle" style="margin-bottom:0">
+    默认密码 <strong>0000</strong>。改过之后忘记了，可以在直播电脑上打开
+    <code>%ProgramData%\LiveControlPanel\settings.json</code>，看 <code>settingsPin</code> 一项；
+    日志 <code>logs\panel-&lt;日期&gt;.log</code> 每次启动也会写一行。
+  </p>
 </section>
 
 <div id="settings-body" class="hidden">
@@ -85,8 +89,18 @@
   </section>
 
   <section class="card">
-    <h2>幻灯片窗口</h2>
-    <p class="subtle">让 WPS 进入全屏放映，然后点下面的按钮，从列表里找到放映窗口，把类名填进来。</p>
+    <h2>幻灯片控制</h2>
+    <p class="subtle" style="margin-top:0">
+      默认<strong>不开启</strong>。开启前请先让 WPS 进入放映，点「检测可用性」看清哪条路能用 ——
+      有些放映程序忽略投递的按键，只有自动化接口有效；也可能反过来。不开启时操作页不会出现翻页按钮。
+    </p>
+    <label style="display:flex;align-items:center;gap:10px;font-size:1rem;color:var(--text)">
+      <input type="checkbox" id="slides-enabled" style="width:22px;height:22px;min-height:0">
+      启用幻灯片控制
+    </label>
+    <button class="ghost" style="margin-top:10px" id="btn-probe-com">检测可用性</button>
+    <pre class="linkbox hidden" id="com-probe-out" style="margin-top:10px;white-space:pre-wrap"></pre>
+
     <label for="slides-class">窗口类名</label>
     <input type="text" id="slides-class">
     <label for="slides-title">窗口标题正则（可留空）</label>

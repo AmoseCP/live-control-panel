@@ -100,6 +100,7 @@ public sealed class StubSlideController : ISlideController
     }
 
     public SlideDiagnostics Diagnose() => new(
+        Enabled: true,
         SessionId: 1,
         SessionIsolated: false,
         ComProgId: "PowerPoint.Application",

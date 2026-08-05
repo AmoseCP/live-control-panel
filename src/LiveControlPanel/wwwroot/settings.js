@@ -64,6 +64,8 @@
     value('obs-video', (obs.videoSourceNames || []).join(', '));
 
     var slides = settings.slides || {};
+    var enabled = document.getElementById('slides-enabled');
+    if (enabled) enabled.checked = !!slides.enabled;
     value('slides-class', slides.windowClass);
     value('slides-title', slides.windowTitleRegex);
     value('slides-strategy', slides.strategy || 'PostMessage');
@@ -93,6 +95,7 @@
         videoSourceNames: splitList(value('obs-video'))
       },
       slides: {
+        enabled: !!(document.getElementById('slides-enabled') || {}).checked,
         windowClass: value('slides-class'),
         windowTitleRegex: value('slides-title'),
         strategy: value('slides-strategy')
@@ -249,6 +252,33 @@
       element.textContent = Array.isArray(result.data)
         ? result.data.join('\n')
         : (result.data && result.data.message) || '读取失败。';
+    });
+  });
+
+  // Reports which of the two paging paths actually works on this machine, so enabling the feature is
+  // an informed decision rather than a guess.
+  L.on('btn-probe-com', function () {
+    var out = document.getElementById('com-probe-out');
+    if (out) { L.show('com-probe-out', true); out.textContent = '检测中…'; }
+
+    L.api.get('/api/diag/slides').then(function (result) {
+      var d = result.data || {};
+      var lines = [
+        '会话: ' + d.sessionId + (d.sessionIsolated ? '（会话 0，翻页无法工作！）' : '（正常）'),
+        '自动化接口: ' + (d.comProgId || '未连上'),
+        '正在放映: ' + (d.slideShowRunning ? '是' : '否'),
+        '页码: ' + (d.current == null ? '读不到' : d.current + ' / ' + d.total),
+        '下一页预览: ' + (d.previewSupported ? '可用' : '不可用'),
+        '放映窗口(按键用): ' + (d.targetWindowFound ? '已找到' : '未找到 / 未配置类名'),
+        d.message ? '说明: ' + d.message : ''
+      ];
+      return L.api.get('/api/diag/com-probe').then(function (probe) {
+        var detail = (probe.data && probe.data.report) || '';
+        if (out) out.textContent = lines.filter(Boolean).join('\n') +
+          (detail ? '\n\n逐步检测:\n' + detail.split(' | ').join('\n') : '');
+      });
+    }).catch(function () {
+      if (out) out.textContent = '检测失败。';
     });
   });
 

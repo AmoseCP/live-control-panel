@@ -45,6 +45,15 @@ public sealed class ObsSettings
 
 public sealed class SlidesSettings
 {
+    /// <summary>
+    /// Off until switched on. Slide control is the one feature that reaches outside the panel into
+    /// another application — synthesizing keystrokes at a window and attaching to a COM automation
+    /// object. Until someone has confirmed on the actual machine which of those work (see
+    /// /api/diag/com-probe), the safe default is to not touch the presentation program at all and to
+    /// keep the paging controls off the operator's screen.
+    /// </summary>
+    public bool Enabled { get; set; }
+
     /// <summary>Determined at deploy time via /api/diag/windows. Never hard-coded (FR 5.3).</summary>
     public string WindowClass { get; set; } = "";
 

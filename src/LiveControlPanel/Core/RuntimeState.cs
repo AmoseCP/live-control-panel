@@ -63,6 +63,9 @@ public sealed class ObsState
 
 public sealed class SlidesState
 {
+    /// <summary>Whether slide control is switched on at all (settings.slides.enabled).</summary>
+    public bool Enabled { get; set; }
+
     public bool Available { get; set; }
     public int? Current { get; set; }
     public int? Total { get; set; }

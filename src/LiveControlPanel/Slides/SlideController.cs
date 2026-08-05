@@ -34,6 +34,7 @@ public sealed record SlideResult(bool Ok, string Message);
 public sealed record SlidePreview(byte[] Png, int SlideNumber, int Total);
 
 public sealed record SlideDiagnostics(
+    bool Enabled,
     int SessionId,
     bool SessionIsolated,
     string? ComProgId,
@@ -81,12 +82,19 @@ public sealed class SlideController : ISlideController
             .ThenBy(w => w.ClassName, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+    private bool Enabled => _config.Settings.Slides.Enabled;
+
     public SlidesState GetState()
     {
+        // Disabled means disabled: no window enumeration and no COM attach. This runs every few
+        // seconds, so when the feature is off it must cost nothing and touch nothing.
+        if (!Enabled) return new SlidesState { Enabled = false, Available = false };
+
         var position = WpsCom.TryGetPosition();
         return new SlidesState
         {
-            Available = FindTargetWindow() is not null,
+            Enabled = true,
+            Available = position is not null || FindTargetWindow() is not null,
             Current = position?.Current,
             Total = position?.Total,
         };
@@ -98,6 +106,8 @@ public sealed class SlideController : ISlideController
     /// </summary>
     public SlidePreview? TryGetPreview(int? slideNumber)
     {
+        if (!Enabled) return null;
+
         lock (_previewGate)
         {
             var position = WpsCom.TryGetPosition();
@@ -151,7 +161,9 @@ public sealed class SlideController : ISlideController
               "窗口句柄与 COM 运行对象表都按会话隔离。请改为在用户登录时启动本程序。"
             : report.Error;
 
+        // Deliberately probes even when disabled — this endpoint is how you decide whether to enable.
         return new SlideDiagnostics(
+            Enabled: Enabled,
             SessionId: sessionId,
             SessionIsolated: isolated,
             ComProgId: report.ProgId,
@@ -182,6 +194,8 @@ public sealed class SlideController : ISlideController
     {
         var what = forward ? "下一页" : "上一页";
 
+        if (!Enabled) return Disabled();
+
         if (forward ? WpsCom.TryNext() : WpsCom.TryPrevious())
             return new SlideResult(true, $"已翻到{what}。");
 
@@ -192,8 +206,12 @@ public sealed class SlideController : ISlideController
         return keystroke;
     }
 
+    private static SlideResult Disabled() =>
+        new(false, "幻灯片控制没有启用。请在设置页勾选「启用幻灯片控制」。");
+
     public SlideResult Goto(int slideNumber)
     {
+        if (!Enabled) return Disabled();
         if (slideNumber < 1) return new SlideResult(false, "页码必须大于 0。");
 
         // Absolute jumps need automation; there is no keystroke equivalent.

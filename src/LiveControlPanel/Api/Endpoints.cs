@@ -383,7 +383,7 @@ public static class Endpoints
         // WPS question gets answered on the church PC without guessing from documentation.
         app.MapGet("/api/diag/com-probe", (ISlideController slides, AccessGate gate, HttpContext context) =>
             gate.IsValidPin(context)
-                ? Results.Text(slides.ProbeCom())
+                ? Results.Json(new { ok = true, report = slides.ProbeCom() }, Json.Options)
                 : PinRequired());
 
         app.MapGet("/api/diag/obs-inputs", async (

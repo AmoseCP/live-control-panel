@@ -70,8 +70,13 @@ public static class Seed
         return string.Concat(bytes.Select(b => CodeAlphabet[b % CodeAlphabet.Length]));
     }
 
-    /// <summary>Numeric PIN guarding the settings page (FR 6.5 — anti-fat-finger, not security).</summary>
-    public static string SettingsPin() =>
-        System.Security.Cryptography.RandomNumberGenerator.GetInt32(1000, 10000)
-            .ToString(System.Globalization.CultureInfo.InvariantCulture);
+    /// <summary>
+    /// Default PIN for the settings page. Fixed, not random: FR 6.5 states the purpose is to stop
+    /// seven people mis-editing settings, not to keep anyone out. A random PIN meant nobody could
+    /// open the settings page without first going to read a JSON file on the server, which is worse
+    /// than the problem it solved. Change it on the settings page, or edit settings.json.
+    /// </summary>
+    public const string DefaultSettingsPin = "0000";
+
+    public static string SettingsPin() => DefaultSettingsPin;
 }

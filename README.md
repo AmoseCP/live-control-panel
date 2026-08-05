@@ -28,17 +28,26 @@
 
 ```bash
 # 需要 .NET 8 SDK
-dotnet test                                    # 233 个单元/接口测试
+dotnet test                                    # 246 个单元/接口测试
 dotnet run --project src/LiveControlPanel       # 默认 http://localhost:5088
 ```
 
-首次启动会在 `%ProgramData%\LiveControlPanel\` 生成配置，并把**访问码**与**设置 PIN** 写进日志：
+首次启动会在 `%ProgramData%\LiveControlPanel\` 生成配置。**每次**启动都会把访问码与设置 PIN 写进日志：
 
 ```
-[WRN] Settings were created fresh. Access code: kktzh75y  Settings PIN: 2152
+[INF] Access code: tftvvvgw   Settings PIN: 0000   (both in C:\ProgramData\LiveControlPanel\settings.json)
 ```
 
 用 `http://localhost:5088/?k=<访问码>` 打开面板。开发时可用 `LCP_DATA_DIR` 环境变量把数据目录指到别处。
+
+### 两个口令
+
+| | 默认值 | 作用 | 在哪找 / 怎么改 |
+| --- | --- | --- | --- |
+| **访问码** `accessCode` | 随机 8 位 | 局域网门禁，URL 带 `?k=`，二维码里已含 | `settings.json` / 启动日志 / 设置页「访问地址与二维码」 |
+| **设置 PIN** `settingsPin` | **`0000`**（固定） | 防七人误改设置，不是安全机制（需求 6.5） | `settings.json` / 启动日志 / 设置页「修改设置密码」 |
+
+PIN 固定而访问码随机，是因为两者目的不同：PIN 只防误触，随机化会导致没人打得开设置页；访问码是真的门禁，必须每台机器不同。
 
 ### 发布单文件 exe
 
@@ -150,7 +159,11 @@ tests/LiveControlPanel.Tests/
 
 `custom` 仍然没有 `weekdays` 与 `startTime`，因此永不参与自动匹配；`scheduledStart` 取当下。Telegram 通知与固定场次一致，发往同一个群（需求 9：确认只需一个群）。
 
-### 5. 幻灯片控制：改为「自动化接口优先，按键为回退」，并新增下一页预览
+### 5. 幻灯片控制：默认关闭，自动化接口优先，并新增下一页预览
+
+**默认不控制 PPT**（`settings.slides.enabled = false`）。这是全部功能里唯一会伸手到别的程序里去的一项 —— 往窗口投按键、attach 到 COM 自动化对象 —— 而这两条路哪条能用是**每台机器不一样的**。关闭时：不枚举窗口、不尝试 COM、操作页不出现任何翻页按钮、`/api/slides/*` 明确回「没有启用」。
+
+在设置页「幻灯片控制」勾选启用。同一张卡片上有「检测可用性」按钮，一次性报出会话号、自动化接口是否连上、页码、预览是否可用、放映窗口是否找到，以及逐个成员的检测结果 —— 先看清再决定要不要开。两个诊断接口在关闭状态下仍然可用，因为它们正是用来判断该不该开的。
 
 需求 5.3 把 `PostMessage` 定向按键定为基线。**在 PowerPoint 16 上实测，按键两条路都不工作：**
 
@@ -202,7 +215,7 @@ sunday-service    [0]         10:30  → 1
 
 ## 测试
 
-233 个测试，全部不接触真实的 YouTube / OBS / Telegram。
+246 个测试，全部不接触真实的 YouTube / OBS / Telegram。
 
 ```bash
 dotnet test
@@ -218,6 +231,8 @@ dotnet test
 | `StateManagerTests` | 四相位状态机、快照深拷贝、并发安全 |
 | `EndpointTests` | 真实路由表 + 访问码/PIN 门禁 + 各接口契约 + 临时直播默认标题 |
 | `SupportingTests` | obs v5 认证算法、虚拟网卡过滤、错误文案不含技术术语、重试策略、窗口匹配 |
+| `SlideControlTests` | 默认关闭、关闭时不碰 Win32/COM、诊断接口关闭时仍可用、启用后无放映时的提示 |
+| `SettingsPinTests` | PIN 为固定默认值、两台安装 PIN 相同但访问码不同、改过的 PIN 不被重置 |
 | `EndpointTests`（幻灯片部分） | 预览返回 PNG、COM 不可用时 404、显式页码透传、访问码门禁、诊断接口需 PIN |
 
 ### 已验证的行为

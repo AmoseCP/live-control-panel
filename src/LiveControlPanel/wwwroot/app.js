@@ -71,7 +71,8 @@
     L.show('preflight-card', phase === 'Ready' && !state.starting);
     L.show('progress-card', (state.steps && state.steps.length > 0) && phase !== 'Ended');
     L.show('scene-card', phase === 'Live' && state.obs.connected);
-    L.show('slides-card', phase === 'Live' || phase === 'Ready');
+    // Off by default; nothing about slides appears until it is switched on in settings.
+    L.show('slides-card', state.slides.enabled && (phase === 'Live' || phase === 'Ready'));
 
     // FR 6.1: the broadcast id exists from creation onward, so the link is not gated on Live.
     L.show('link-card', !!(broadcast && broadcast.watchUrl));
@@ -254,7 +255,7 @@
    * On any failure the block is hidden rather than left showing a stale or broken image.
    */
   function refreshPreview(slides) {
-    if (!slides.current || !slides.total) {
+    if (!slides.enabled || !slides.current || !slides.total) {
       previewShownFor = null;
       L.show('slide-preview', false);
       return;

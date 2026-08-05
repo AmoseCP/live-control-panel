@@ -206,10 +206,17 @@ public static class Program
         foreach (var address in access.Addresses)
             log.LogInformation("LAN URL: {Url} ({Adapter})", address.Url, address.AdapterName);
 
-        if (config.SettingsWereSeeded)
+        // The access code is random per installation, so it has to be discoverable somewhere; the log
+        // and settings.json are the two places. Printed on every start, not only the first, because
+        // whoever needs it is usually looking at a machine somebody else set up.
+        log.LogInformation("Access code: {Code}   Settings PIN: {Pin}   (both in {File})",
+            config.Settings.AccessCode, config.Settings.SettingsPin, config.Paths.SettingsFile);
+
+        if (config.Settings.SettingsPin == Config.Seed.DefaultSettingsPin)
         {
-            log.LogWarning("Settings were created fresh. Access code: {Code}  Settings PIN: {Pin}",
-                config.Settings.AccessCode, config.Settings.SettingsPin);
+            log.LogInformation(
+                "Settings PIN is still the default {Pin}. Change it on the settings page if you want.",
+                Config.Seed.DefaultSettingsPin);
         }
 
         WarnIfSessionIsolated(log);
