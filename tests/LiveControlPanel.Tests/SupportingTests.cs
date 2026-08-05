@@ -188,7 +188,7 @@ public class FriendlyErrorTests
             HttpStatusCode = HttpStatusCode.Forbidden,
         };
 
-        var message = FriendlyError.Describe(ex);
+        var message = FriendlyError.Describe(ex).Zh;
 
         Assert.Equal("今天创建直播的次数已达上限，请联系管理员。", message);
         Assert.DoesNotContain("403", message);
@@ -206,25 +206,25 @@ public class FriendlyErrorTests
             },
         };
 
-        Assert.Contains("OBS", FriendlyError.Describe(ex));
+        Assert.Contains("OBS", FriendlyError.Describe(ex).Zh);
     }
 
     [Fact]
     public void Missing_authorization_points_at_the_settings_page()
     {
-        Assert.Contains("重新授权", FriendlyError.Describe(new NotAuthorizedException()));
+        Assert.Contains("重新授权", FriendlyError.Describe(new NotAuthorizedException()).Zh);
     }
 
     [Fact]
     public void A_disconnected_obs_says_to_open_obs()
     {
-        Assert.Contains("OBS", FriendlyError.Describe(new ObsUnavailableException()));
+        Assert.Contains("OBS", FriendlyError.Describe(new ObsUnavailableException()).Zh);
     }
 
     [Fact]
     public void Network_failures_mention_the_network_not_the_exception()
     {
-        var message = FriendlyError.Describe(new HttpRequestException("No such host is known."));
+        var message = FriendlyError.Describe(new HttpRequestException("No such host is known.")).Zh;
 
         Assert.Contains("网络", message);
         Assert.DoesNotContain("host", message);
@@ -242,7 +242,7 @@ public class FriendlyErrorTests
             ? new InvalidOperationException("请让管理员在设置页创建推流密钥。")
             : (Exception)Activator.CreateInstance(exceptionType)!;
 
-        var message = FriendlyError.Describe(ex);
+        var message = FriendlyError.Describe(ex).Zh;
 
         Assert.False(string.IsNullOrWhiteSpace(message));
         foreach (var forbidden in new[] { "Exception", "System.", "stack", "null reference", "HTTP " })

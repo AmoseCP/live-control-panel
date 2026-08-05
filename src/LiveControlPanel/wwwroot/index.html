@@ -6,126 +6,128 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="直播控制">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>直播控制面板</title>
+  <title data-i18n-title="app.title">直播控制面板</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<div id="offline" class="hidden">连接中断，正在重新连接…</div>
+<div id="offline" class="hidden" data-i18n="offline">连接中断，正在重新连接…</div>
 
-<h1>直播控制面板</h1>
+<div class="titlebar">
+  <h1 data-i18n="app.title">直播控制面板</h1>
+  <!-- Global language switch. Default Chinese; the choice is remembered per device. -->
+  <button id="btn-lang" class="lang">English</button>
+</div>
 
-<!--
-  phase: NoSchedule. Two different situations share this phase and must not share wording:
-  a service is coming later today (just not inside its window yet), or there is genuinely
-  nothing scheduled. "本日无排期" in front of an operator who arrived early reads as
-  "you have the wrong day".
--->
+<!-- phase: NoSchedule -->
 <section id="phase-noschedule" class="card hidden">
-  <h2 id="noschedule-heading">本日无排期</h2>
+  <h2 id="noschedule-heading" data-i18n="noschedule.heading">本日无排期</h2>
   <p class="title-big" id="noschedule-title"></p>
-  <p id="next-service" class="subtle">正在读取下一场时间…</p>
-  <button class="hidden" id="btn-prepare-now" style="margin-top:12px">现在就开始准备</button>
-  <button class="ghost" id="btn-pick-other">手动选择一场 →</button>
+  <p id="next-service" class="subtle" data-i18n="noschedule.loading">正在读取下一场时间…</p>
+  <button class="hidden" id="btn-prepare-now" style="margin-top:12px"
+          data-i18n="noschedule.prepareNow">现在就开始准备</button>
+  <button class="ghost" id="btn-pick-other" data-i18n="noschedule.pickOther">手动选择一场 →</button>
 </section>
 
 <!-- phase: Ready -->
 <section id="phase-ready" class="card hidden">
-  <h2>今天</h2>
+  <h2 data-i18n="ready.heading">今天</h2>
   <p class="title-big" id="ready-title">—</p>
   <p class="subtle" id="ready-time"></p>
   <div class="stack" style="margin-top:14px">
-    <button class="primary" id="btn-start">开始今天的直播</button>
-    <button class="ghost" id="btn-not-this">不是这一场？</button>
+    <button class="primary" id="btn-start" data-i18n="ready.start">开始今天的直播</button>
+    <button class="ghost" id="btn-not-this" data-i18n="ready.notThisOne">不是这一场？</button>
   </div>
 </section>
 
 <!-- start progress -->
 <section id="progress-card" class="card hidden">
-  <h2>正在开始直播</h2>
+  <h2 data-i18n="progress.heading">正在开始直播</h2>
   <ol class="steps" id="steps"></ol>
-  <button class="hidden" id="btn-retry">重试这一步</button>
+  <button class="hidden" id="btn-retry"></button>
 </section>
 
 <!-- pre-flight -->
 <section id="preflight-card" class="card hidden">
-  <h2>开播前自检</h2>
+  <h2 data-i18n="preflight.heading">开播前自检</h2>
   <div id="preflight"></div>
-  <p class="subtle" style="margin-bottom:0">自检有问题也可以照常开播。</p>
+  <p class="subtle" style="margin-bottom:0" data-i18n="preflight.note">自检有问题也可以照常开播。</p>
 </section>
 
 <!-- phase: Live -->
 <section id="phase-live" class="card hidden">
-  <h2>正在直播</h2>
+  <h2 data-i18n="live.heading">正在直播</h2>
   <p class="title-big" id="live-title">—</p>
   <div class="metrics" style="margin:10px 0 14px">
-    <div class="metric" id="m-time">—<span>已直播</span></div>
-    <div class="metric" id="m-bitrate">—<span>码率</span></div>
-    <div class="metric" id="m-dropped">—<span>丢帧</span></div>
-    <div class="metric" id="m-scene">—<span>当前画面</span></div>
+    <div class="metric" id="m-time">—<span data-i18n="live.elapsed">已直播</span></div>
+    <div class="metric" id="m-bitrate">—<span data-i18n="live.bitrate">码率</span></div>
+    <div class="metric" id="m-dropped">—<span data-i18n="live.dropped">丢帧</span></div>
+    <div class="metric" id="m-scene">—<span data-i18n="live.scene">当前画面</span></div>
   </div>
   <div class="stack">
-    <button id="btn-telegram">发送链接到 Telegram</button>
-    <button class="danger" id="btn-stop">结束直播</button>
+    <button id="btn-telegram" data-i18n="live.sendTelegram">发送链接到 Telegram</button>
+    <button class="danger" id="btn-stop" data-i18n="live.stop">结束直播</button>
   </div>
 </section>
 
 <!-- scenes -->
 <section id="scene-card" class="card hidden">
-  <h2>切换画面</h2>
+  <h2 data-i18n="scene.heading">切换画面</h2>
   <div class="row" id="scene-buttons"></div>
 </section>
 
 <!-- slides -->
 <section id="slides-card" class="card hidden">
-  <h2>幻灯片 <span class="subtle" id="slide-pos"></span></h2>
+  <h2><span data-i18n="slides.heading">幻灯片</span> <span class="subtle" id="slide-pos"></span></h2>
   <!-- Hidden unless the presentation program can actually render a slide image. -->
   <figure id="slide-preview" class="hidden">
-    <img id="slide-preview-img" alt="下一页预览">
-    <figcaption class="subtle" id="slide-preview-caption">下一页</figcaption>
+    <img id="slide-preview-img" alt="">
+    <figcaption class="subtle" id="slide-preview-caption"></figcaption>
   </figure>
   <div class="slide-row">
-    <button id="btn-prev">◀ 上一页</button>
-    <button id="btn-next">下一页 ▶</button>
+    <button id="btn-prev" data-i18n="slides.prev">◀ 上一页</button>
+    <button id="btn-next" data-i18n="slides.next">下一页 ▶</button>
   </div>
 </section>
 
 <!-- phase: Ended -->
 <section id="phase-ended" class="card hidden">
-  <h2>直播已结束</h2>
+  <h2 data-i18n="ended.heading">直播已结束</h2>
   <p class="title-big" id="ended-title">—</p>
-  <button class="ghost" id="btn-another" style="margin-top:12px">开始另一场 →</button>
+  <button class="ghost" id="btn-another" style="margin-top:12px" data-i18n="ended.another">开始另一场 →</button>
 </section>
 
 <!-- link: available from broadcast creation onward, not only while live -->
 <section id="link-card" class="card hidden">
-  <h2>直播链接</h2>
+  <h2 data-i18n="link.heading">直播链接</h2>
   <div class="linkbox" id="watch-url"></div>
-  <button style="margin-top:10px" id="btn-copy">复制链接</button>
-  <p class="subtle" id="copy-hint" style="margin-bottom:0">复制不成功时，可长按上面的地址手动复制。</p>
+  <button style="margin-top:10px" id="btn-copy" data-i18n="link.copy">复制链接</button>
+  <p class="subtle" id="copy-hint" style="margin-bottom:0" data-i18n="link.hint">
+    复制不成功时，可长按上面的地址手动复制。</p>
 </section>
 
 <!-- template override -->
 <section id="picker-card" class="card hidden">
-  <h2>选择场次</h2>
+  <h2 data-i18n="picker.heading">选择场次</h2>
   <div class="stack" id="template-list"></div>
-  <label for="custom-title">临时直播（排期之外的额外直播，标题可以改）</label>
+  <label for="custom-title" data-i18n="picker.adHocLabel">临时直播（排期之外的额外直播，标题可以改）</label>
   <input type="text" id="custom-title" placeholder="8/5/2026 Service">
-  <button style="margin-top:10px" id="btn-create-custom">用这个标题建播</button>
-  <button class="ghost" id="btn-picker-cancel">取消</button>
+  <button style="margin-top:10px" id="btn-create-custom" data-i18n="picker.adHocCreate">用这个标题建播</button>
+  <button class="ghost" id="btn-picker-cancel" data-i18n="picker.cancel">取消</button>
 </section>
 
 <section class="card">
-  <h2>状态</h2>
+  <h2 data-i18n="status.heading">状态</h2>
   <p class="subtle" style="margin:0"><span class="dot" id="dot-obs"></span><span id="obs-text">OBS —</span></p>
-  <p class="subtle" style="margin:6px 0 0"><span class="dot" id="dot-auth"></span><span id="auth-text">授权 —</span></p>
+  <p class="subtle" style="margin:6px 0 0"><span class="dot" id="dot-auth"></span><span id="auth-text">—</span></p>
   <p class="subtle" id="last-action" style="margin:6px 0 0"></p>
-  <button class="ghost" id="btn-refresh" style="margin-top:10px">重新自检</button>
-  <button class="ghost" id="btn-settings">设置 →</button>
+  <button class="ghost" id="btn-refresh" style="margin-top:10px" data-i18n="status.recheck">重新自检</button>
+  <button class="ghost" id="btn-settings" data-i18n="status.settings">设置 →</button>
 </section>
 
 <div id="toast" class="hidden"></div>
 
+<script src="i18n.js"></script>
 <script src="common.js"></script>
 <script src="app.js"></script>
 </body>

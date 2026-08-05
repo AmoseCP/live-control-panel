@@ -1,4 +1,5 @@
 using LiveControlPanel.Config;
+using LiveControlPanel.Core;
 
 namespace LiveControlPanel.Api;
 
@@ -80,8 +81,10 @@ public static class AccessGateMiddleware
                 context.Response.StatusCode = StatusCodes.Status403Forbidden;
                 await context.Response.WriteAsJsonAsync(new GateResult(
                     false,
-                    "访问码无效。请重新扫描二维码，或用管理员给的完整链接打开。",
-                    GateResult.BadAccessCode));
+                    new Msg(
+                        "访问码无效。请重新扫描二维码，或用管理员给的完整链接打开。",
+                        "Invalid access code. Re-scan the QR code, or open the full link the administrator gave you."),
+                    GateResult.BadAccessCode), Json.Options);
                 return;
             }
 

@@ -148,7 +148,7 @@ public class OrchestratorTests
 
         Assert.False(outcome.Ok);
         Assert.Equal(Orchestrator.StepStream, outcome.FailedStep);
-        Assert.Contains("OBS", outcome.Message);
+        Assert.Contains("OBS", outcome.Message.Zh);
 
         // The broadcast exists and is bound; only the stream failed.
         Assert.Equal(1, host.YouTube.CreateCalls);
@@ -203,9 +203,9 @@ public class OrchestratorTests
 
         Assert.False(outcome.Ok);
         Assert.Equal(Orchestrator.StepCreate, outcome.FailedStep);
-        Assert.DoesNotContain("Exception", outcome.Message);
-        Assert.DoesNotContain("403", outcome.Message);
-        Assert.Contains("重新授权", outcome.Message);
+        Assert.DoesNotContain("Exception", outcome.Message.Zh);
+        Assert.DoesNotContain("403", outcome.Message.Zh);
+        Assert.Contains("重新授权", outcome.Message.Zh);
     }
 
     // ---------------------------------------------------------------- step guards
@@ -219,7 +219,7 @@ public class OrchestratorTests
 
         Assert.False(outcome.Ok);
         Assert.Equal(0, host.YouTube.CreateCalls);
-        Assert.Contains("没有排期", outcome.Message);
+        Assert.Contains("没有排期", outcome.Message.Zh);
     }
 
     [Fact]
@@ -233,7 +233,7 @@ public class OrchestratorTests
 
         Assert.False(outcome.Ok);
         Assert.Equal(Orchestrator.StepBind, outcome.FailedStep);
-        Assert.Contains("推流密钥", outcome.Message);
+        Assert.Contains("推流密钥", outcome.Message.Zh);
     }
 
     [Fact]
@@ -324,7 +324,7 @@ public class OrchestratorTests
         var outcome = await host.Orchestrator.StopAsync();
 
         Assert.False(outcome.Ok);
-        Assert.Contains("OBS", outcome.Message);
+        Assert.Contains("OBS", outcome.Message.Zh);
         Assert.Equal(0, host.YouTube.TransitionCalls);
     }
 
@@ -340,7 +340,7 @@ public class OrchestratorTests
         var outcome = await host.Orchestrator.StopAsync();
 
         Assert.False(outcome.Ok);
-        Assert.Contains("推流已停止", outcome.Message);
+        Assert.Contains("推流已停止", outcome.Message.Zh);
 
         // The stream really has stopped, so the panel must not still claim to be live.
         Assert.Equal(Phase.Ended, host.State.Snapshot().Phase);

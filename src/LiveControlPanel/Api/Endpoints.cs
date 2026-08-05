@@ -20,14 +20,14 @@ public sealed record CreateBroadcastBody(
     string? Title,
     string? Description);
 
-public sealed record ApiResult(bool Ok, string Message, int? FailedStep = null);
+public sealed record ApiResult(bool Ok, Msg Message, int? FailedStep = null);
 
 /// <summary>
 /// A refused request, carrying *which* gate refused it. Both gates answer 403, and without this the
 /// page cannot tell "your access code is stale" from "your PIN is wrong" — so it guesses, and the
 /// guess sends the operator to fix the wrong thing.
 /// </summary>
-public sealed record GateResult(bool Ok, string Message, string Reason)
+public sealed record GateResult(bool Ok, Msg Message, string Reason)
 {
     public const string BadAccessCode = "code";
     public const string PinRequired = "pin";
@@ -76,7 +76,7 @@ public static class Endpoints
             async (int step, Orchestrator orchestrator, CancellationToken ct) =>
             {
                 if (step is < Orchestrator.StepCreate or > Orchestrator.StepAwaitLive)
-                    return Results.BadRequest(new ApiResult(false, "无效的步骤编号。"));
+                    return Results.BadRequest(new ApiResult(false, new Msg("无效的步骤编号。", "Invalid step number.")));
 
                 var outcome = await orchestrator.StartTodayAsync(step, ct);
                 return Outcome(outcome);
@@ -87,20 +87,20 @@ public static class Endpoints
             CreateBroadcastBody body, ConfigStore config, StateManager state) =>
         {
             if (state.Read(s => s.Broadcast) is { Id: not null })
-                return Results.BadRequest(new ApiResult(false, "已经有一场直播了。请先结束它，再开始另一场。"));
+                return Results.BadRequest(new ApiResult(false, new Msg("已经有一场直播了。请先结束它，再开始另一场。", "A broadcast already exists. End it before starting another.")));
 
             var date = body.Date ?? DateTime.Now;
             var template = body.TemplateId is null ? null : config.FindTemplate(body.TemplateId);
 
             if (body.TemplateId is not null && template is null)
-                return Results.BadRequest(new ApiResult(false, "找不到这个场次。"));
+                return Results.BadRequest(new ApiResult(false, new Msg("找不到这个场次。", "No such service.")));
 
             var title = !string.IsNullOrWhiteSpace(body.Title)
                 ? body.Title!
                 : template is null ? "" : ScheduleMatcher.FormatTitle(template, date);
 
             if (string.IsNullOrWhiteSpace(title))
-                return Results.BadRequest(new ApiResult(false, "请填写直播标题。"));
+                return Results.BadRequest(new ApiResult(false, new Msg("请填写直播标题。", "Enter a broadcast title.")));
 
             var scheduledStart = date;
             if (template is not null && ScheduleMatcher.TryParseStartTime(template.StartTime, out var startTime))
@@ -121,7 +121,7 @@ public static class Endpoints
                 s.Telegram = new TelegramState();
             });
 
-            return Results.Json(new ApiResult(true, $"已选择「{title}」。"), Json.Options);
+            return Results.Json(new ApiResult(true, new Msg($"已选择「{title}」。", $"Selected \"{title}\".")), Json.Options);
         });
 
         // FR 4.3: the panel requires an explicit confirm flag; the UI puts a real dialog in front of it.
@@ -129,7 +129,7 @@ public static class Endpoints
             ConfirmRequest body, Orchestrator orchestrator, CancellationToken ct) =>
         {
             if (!body.Confirm)
-                return Results.BadRequest(new ApiResult(false, "需要确认后才能结束直播。"));
+                return Results.BadRequest(new ApiResult(false, new Msg("需要确认后才能结束直播。", "The broadcast can only be ended after confirmation.")));
 
             var outcome = await orchestrator.StopAsync(ct);
             return Outcome(outcome);
@@ -140,8 +140,8 @@ public static class Endpoints
 
         app.MapPost("/api/broadcast/start-another", (Orchestrator orchestrator) =>
             orchestrator.StartAnother()
-                ? Results.Json(new ApiResult(true, "可以开始下一场了。"), Json.Options)
-                : Results.BadRequest(new ApiResult(false, "当前这场还没有结束。")));
+                ? Results.Json(new ApiResult(true, new Msg("可以开始下一场了。", "Ready to start another service.")), Json.Options)
+                : Results.BadRequest(new ApiResult(false, new Msg("当前这场还没有结束。", "The current service has not ended yet."))));
     }
 
     // ---------------------------------------------------------------- obs / slides
@@ -152,13 +152,13 @@ public static class Endpoints
             SceneRequest body, Obs.IObsClient obs, StateManager state, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(body.Scene))
-                return Results.BadRequest(new ApiResult(false, "请指定画面名称。"));
+                return Results.BadRequest(new ApiResult(false, new Msg("请指定画面名称。", "Specify a scene name.")));
 
             try
             {
                 await obs.SetSceneAsync(body.Scene, ct);
-                state.RecordAction($"切换画面到「{body.Scene}」");
-                return Results.Json(new ApiResult(true, $"已切到「{body.Scene}」。"), Json.Options);
+                state.RecordAction(new Msg($"切换画面到「{body.Scene}」", $"Switched scene to \"{body.Scene}\""));
+                return Results.Json(new ApiResult(true, new Msg($"已切到「{body.Scene}」。", $"Switched to \"{body.Scene}\".")), Json.Options);
             }
             catch (Exception ex)
             {
@@ -228,8 +228,9 @@ public static class Endpoints
         app.MapGet("/auth/start", (YouTubeAuth auth, ConfigStore config) =>
         {
             if (!auth.IsConfigured)
-                return Results.BadRequest(new ApiResult(false,
-                    "请先在设置页填写 YouTube 的 Client ID 与 Client Secret。"));
+                return Results.BadRequest(new ApiResult(false, new Msg(
+                    "请先在设置页填写 YouTube 的 Client ID 与 Client Secret。",
+                    "Enter the YouTube Client ID and Client Secret on the settings page first.")));
 
             return Results.Redirect(auth.BuildAuthorizationUrl(config.Settings.Port));
         });
@@ -263,7 +264,7 @@ public static class Endpoints
             if (!gate.IsValidPin(context)) return PinRequired();
 
             await auth.RevokeAsync(ct);
-            return Results.Json(new ApiResult(true, "已清除授权，请重新授权。"), Json.Options);
+            return Results.Json(new ApiResult(true, new Msg("已清除授权，请重新授权。", "Authorization cleared. Please authorize again.")), Json.Options);
         });
     }
 
@@ -309,7 +310,7 @@ public static class Endpoints
             // reads as "the setting did not save".
             state.RefreshSlides();
 
-            return Results.Json(new ApiResult(true, "设置已保存。"), Json.Options);
+            return Results.Json(new ApiResult(true, new Msg("设置已保存。", "Settings saved.")), Json.Options);
         });
 
         app.MapGet("/api/templates", (ConfigStore config, AccessGate gate, HttpContext context) =>
@@ -338,16 +339,16 @@ public static class Endpoints
             if (!gate.IsValidPin(context)) return PinRequired();
 
             if (body.Count == 0)
-                return Results.BadRequest(new ApiResult(false, "至少要保留一个场次。"));
+                return Results.BadRequest(new ApiResult(false, new Msg("至少要保留一个场次。", "Keep at least one service.")));
 
             if (body.Any(t => string.IsNullOrWhiteSpace(t.Id)))
-                return Results.BadRequest(new ApiResult(false, "每个场次都需要一个 id。"));
+                return Results.BadRequest(new ApiResult(false, new Msg("每个场次都需要一个 id。", "Every service needs an id.")));
 
             if (body.Select(t => t.Id.ToLowerInvariant()).Distinct().Count() != body.Count)
-                return Results.BadRequest(new ApiResult(false, "场次 id 不能重复。"));
+                return Results.BadRequest(new ApiResult(false, new Msg("场次 id 不能重复。", "Service ids must be unique.")));
 
             config.SaveTemplates(body);
-            return Results.Json(new ApiResult(true, "场次已保存。"), Json.Options);
+            return Results.Json(new ApiResult(true, new Msg("场次已保存。", "Services saved.")), Json.Options);
         });
 
         app.MapPost("/api/stream-key/create", async (
@@ -363,7 +364,10 @@ public static class Endpoints
                 return Results.Json(new
                 {
                     ok = true,
-                    message = "已创建推流密钥。请把下面的密钥填进 OBS 的「设置 → 推流 → 串流密钥」，此后不必再改。",
+                    message = new Msg(
+                        "已创建推流密钥。请把下面的密钥填进 OBS 的「设置 → 推流 → 串流密钥」，此后不必再改。",
+                        "Stream key created. Enter the key below in OBS under Settings → Stream → Stream Key; " +
+                        "it never needs changing again."),
                     streamId = key.StreamId,
                     ingestionKey = key.IngestionKey,
                     ingestionAddress = key.IngestionAddress,
@@ -419,7 +423,7 @@ public static class Endpoints
 
     private static IResult PinRequired() =>
         Results.Json(
-            new GateResult(false, "设置密码（PIN）不对。", GateResult.PinRequired),
+            new GateResult(false, new Msg("设置密码（PIN）不对。", "The settings PIN is incorrect."), GateResult.PinRequired),
             Json.Options, statusCode: 403);
 
     private static IResult Html(string body) => Results.Content("""

@@ -5,6 +5,7 @@ using Google.Apis.Auth.OAuth2.Requests;
 using Google.Apis.Auth.OAuth2.Responses;
 using Google.Apis.YouTube.v3;
 using LiveControlPanel.Config;
+using LiveControlPanel.Core;
 
 namespace LiveControlPanel.Youtube;
 
@@ -121,11 +122,14 @@ public sealed class YouTubeAuth
     public async Task<AuthInfo> GetAuthInfoAsync(CancellationToken ct)
     {
         if (!IsConfigured)
-            return new AuthInfo(false, null, null, "YouTube 客户端未配置：请在设置页填写 Client ID 与 Secret。");
+            return new AuthInfo(false, null, null, new Msg(
+                "YouTube 客户端未配置：请在设置页填写 Client ID 与 Secret。",
+                "The YouTube client is not configured: enter the Client ID and Secret on the settings page."));
 
         var credential = await TryGetCredentialAsync(ct).ConfigureAwait(false);
         if (credential is null)
-            return new AuthInfo(false, null, null, "尚未授权 YouTube 账号。");
+            return new AuthInfo(false, null, null, new Msg(
+                "尚未授权 YouTube 账号。", "The YouTube account has not been authorized yet."));
 
         var authorizedAt = _store.AuthorizedAtUtc;
         var remaining = RemainingDays(authorizedAt);
@@ -135,14 +139,16 @@ public sealed class YouTubeAuth
             var accessToken = await credential.GetAccessTokenForRequestAsync(cancellationToken: ct)
                 .ConfigureAwait(false);
             if (string.IsNullOrEmpty(accessToken))
-                return new AuthInfo(false, remaining, authorizedAt?.ToLocalTime(), "授权已失效，需要重新授权。");
+                return new AuthInfo(false, remaining, authorizedAt?.ToLocalTime(), new Msg(
+                    "授权已失效，需要重新授权。", "Authorization has expired and needs renewing."));
 
             return new AuthInfo(true, remaining, authorizedAt?.ToLocalTime(), null);
         }
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Refreshing the YouTube access token failed");
-            return new AuthInfo(false, remaining, authorizedAt?.ToLocalTime(), "授权已失效，需要重新授权。");
+            return new AuthInfo(false, remaining, authorizedAt?.ToLocalTime(), new Msg(
+                "授权已失效，需要重新授权。", "Authorization has expired and needs renewing."));
         }
     }
 

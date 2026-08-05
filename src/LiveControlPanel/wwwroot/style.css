@@ -35,7 +35,27 @@ body {
   margin: 0 auto;
 }
 
-h1 { font-size: 1.25rem; margin: 4px 0 12px; }
+h1 { font-size: 1.25rem; margin: 0; }
+
+/* Title row with the language switch pinned to the right. */
+.titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 0 12px;
+}
+
+button.lang {
+  width: auto;
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 14px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  background: transparent;
+  color: var(--muted);
+}
 h2 { font-size: 1rem; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
 
 .card {

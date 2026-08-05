@@ -29,7 +29,7 @@ public interface ISlideController
     string ProbeCom();
 }
 
-public sealed record SlideResult(bool Ok, string Message);
+public sealed record SlideResult(bool Ok, LiveControlPanel.Core.Msg Message);
 
 public sealed record SlidePreview(byte[] Png, int SlideNumber, int Total);
 
@@ -44,7 +44,7 @@ public sealed record SlideDiagnostics(
     bool PreviewSupported,
     bool TargetWindowFound,
     string Strategy,
-    string? Message,
+    LiveControlPanel.Core.Msg? Message,
     string? Culture);
 
 /// <summary>
@@ -157,8 +157,12 @@ public sealed class SlideController : ISlideController
         // per-session, so from there neither paging nor preview can ever reach the operator's desktop.
         var isolated = sessionId == 0;
         var message = isolated
-            ? "本进程运行在会话 0（Windows 服务会话）。幻灯片翻页与预览在此会话下无法工作 —— " +
-              "窗口句柄与 COM 运行对象表都按会话隔离。请改为在用户登录时启动本程序。"
+            ? new Msg(
+                "本进程运行在会话 0（Windows 服务会话）。幻灯片翻页与预览在此会话下无法工作 —— " +
+                "窗口句柄与 COM 运行对象表都按会话隔离。请改为在用户登录时启动本程序。",
+                "This process is in session 0 (the Windows service session). Slide paging and preview " +
+                "cannot work from here: window handles and the COM running-object table are per-session. " +
+                "Start this program at user logon instead.")
             : report.Error;
 
         // Deliberately probes even when disabled — this endpoint is how you decide whether to enable.
@@ -192,44 +196,48 @@ public sealed class SlideController : ISlideController
     /// </summary>
     private SlideResult Advance(bool forward)
     {
-        var what = forward ? "下一页" : "上一页";
-
         if (!Enabled) return Disabled();
 
-        if (forward ? WpsCom.TryNext() : WpsCom.TryPrevious())
-            return new SlideResult(true, $"已翻到{what}。");
+        var whatZh = forward ? "下一页" : "上一页";
+        var whatEn = forward ? "next slide" : "previous slide";
 
-        var keystroke = SendKey(forward ? Win32.VK_RIGHT : Win32.VK_LEFT, what);
+        if (forward ? WpsCom.TryNext() : WpsCom.TryPrevious())
+            return new SlideResult(true, new Msg($"已翻到{whatZh}。", $"Moved to the {whatEn}."));
+
+        var keystroke = SendKey(forward ? Win32.VK_RIGHT : Win32.VK_LEFT, whatZh, whatEn);
         if (keystroke.Ok) return keystroke;
 
-        _log.LogWarning("Paging {What} failed through both automation and keystrokes", what);
+        _log.LogWarning("Paging {What} failed through both automation and keystrokes", whatEn);
         return keystroke;
     }
 
-    private static SlideResult Disabled() =>
-        new(false, "幻灯片控制没有启用。请在设置页勾选「启用幻灯片控制」。");
+    private static SlideResult Disabled() => new(false, new Msg(
+        "幻灯片控制没有启用。请在设置页勾选「启用幻灯片控制」。",
+        "Slide control is switched off. Tick \"enable slide control\" on the settings page."));
 
     public SlideResult Goto(int slideNumber)
     {
         if (!Enabled) return Disabled();
-        if (slideNumber < 1) return new SlideResult(false, "页码必须大于 0。");
+        if (slideNumber < 1) return new SlideResult(false, new Msg("页码必须大于 0。", "The page number must be greater than 0."));
 
         // Absolute jumps need automation; there is no keystroke equivalent.
-        if (WpsCom.TryGoto(slideNumber)) return new SlideResult(true, $"已跳转到第 {slideNumber} 页。");
+        if (WpsCom.TryGoto(slideNumber))
+            return new SlideResult(true, new Msg($"已跳转到第 {slideNumber} 页。", $"Jumped to slide {slideNumber}."));
 
-        return new SlideResult(false, "无法跳页：当前放映程序未提供跳页接口，请用上一页/下一页。");
+        return new SlideResult(false, new Msg(
+            "无法跳页：当前放映程序未提供跳页接口，请用上一页/下一页。",
+            "Cannot jump: this presentation program offers no jump-to-slide interface. Use previous/next."));
     }
 
-    private SlideResult SendKey(ushort virtualKey, string what)
+    private SlideResult SendKey(ushort virtualKey, string whatZh, string whatEn)
     {
         var strategy = _config.Settings.Slides.Strategy;
 
         if (string.Equals(strategy, "SendInput", StringComparison.OrdinalIgnoreCase))
-            return SendViaSendInput(virtualKey, what);
+            return SendViaSendInput(virtualKey, whatZh, whatEn);
 
         var target = FindTargetWindow();
-        if (target is null)
-            return new SlideResult(false, "找不到放映窗口：请确认幻灯片已进入放映状态。");
+        if (target is null) return NoShowWindow();
 
         var handle = new IntPtr(target.Handle);
         var key = new IntPtr(virtualKey);
@@ -240,23 +248,29 @@ public sealed class SlideController : ISlideController
         if (!down || !up)
         {
             _log.LogWarning("PostMessage to slide window {Handle} failed", target.Handle);
-            return new SlideResult(false, "翻页指令发送失败：请在设置页改用 SendInput 方式后重试。");
+            return new SlideResult(false, new Msg(
+                "翻页指令发送失败：请在设置页改用 SendInput 方式后重试。",
+                "The page-turn command could not be delivered. Switch to SendInput on the settings page " +
+                "and try again."));
         }
 
-        return new SlideResult(true, $"已发送{what}。");
+        return new SlideResult(true, new Msg($"已发送{whatZh}。", $"Sent {whatEn}."));
     }
 
-    private SlideResult SendViaSendInput(ushort virtualKey, string what)
+    private SlideResult SendViaSendInput(ushort virtualKey, string whatZh, string whatEn)
     {
         var target = FindTargetWindow();
-        if (target is null)
-            return new SlideResult(false, "找不到放映窗口：请确认幻灯片已进入放映状态。");
+        if (target is null) return NoShowWindow();
 
         // Steals focus briefly — the documented cost of this fallback.
         Win32.SetForegroundWindow(new IntPtr(target.Handle));
         Win32.SendKey(virtualKey);
-        return new SlideResult(true, $"已发送{what}。");
+        return new SlideResult(true, new Msg($"已发送{whatZh}。", $"Sent {whatEn}."));
     }
+
+    private static SlideResult NoShowWindow() => new(false, new Msg(
+        "找不到放映窗口：请确认幻灯片已进入放映状态。",
+        "No slide-show window found. Check that the presentation is actually presenting."));
 
     /// <summary>
     /// Matches by configured class name and/or title regex. Both blank means unconfigured, which is

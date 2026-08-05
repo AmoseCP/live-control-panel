@@ -30,7 +30,7 @@ public class PreflightTests
     {
         using var host = new TestHost();
         host.Obs.Connected = false;
-        host.YouTube.Auth = new AuthInfo(false, null, null, "尚未授权 YouTube 账号。");
+        host.YouTube.Auth = new AuthInfo(false, null, null, new LiveControlPanel.Core.Msg("尚未授权 YouTube 账号。", "Not authorized yet."));
         host.YouTube.Unfinished = new List<BroadcastInfo>
         {
             new("old1", "8/5/2026 Morning Service", "live", "url"),
@@ -40,10 +40,10 @@ public class PreflightTests
 
         foreach (var item in items.Where(i => !i.Ok))
         {
-            Assert.False(string.IsNullOrWhiteSpace(item.Message));
-            Assert.DoesNotContain("Exception", item.Message);
-            Assert.DoesNotContain("null", item.Message);
-            Assert.DoesNotContain("403", item.Message);
+            Assert.False(string.IsNullOrWhiteSpace(item.Message.Zh));
+            Assert.DoesNotContain("Exception", item.Message.Zh);
+            Assert.DoesNotContain("null", item.Message.Zh);
+            Assert.DoesNotContain("403", item.Message.Zh);
         }
     }
 
@@ -58,7 +58,7 @@ public class PreflightTests
         var item = Item(await host.Preflight.RunAsync(), "obs");
 
         Assert.False(item.Ok);
-        Assert.Contains("OBS", item.Message);
+        Assert.Contains("OBS", item.Message.Zh);
     }
 
     [Fact]
@@ -90,8 +90,8 @@ public class PreflightTests
         var item = Item(await host.Preflight.RunAsync(), "audio");
 
         Assert.False(item.Ok);
-        Assert.Contains("调音台", item.Message);
-        Assert.Contains("USB", item.Message);
+        Assert.Contains("调音台", item.Message.Zh);
+        Assert.Contains("USB", item.Message.Zh);
     }
 
     [Fact]
@@ -103,7 +103,7 @@ public class PreflightTests
         var item = Item(await host.Preflight.RunAsync(), "audio");
 
         Assert.False(item.Ok);
-        Assert.Contains("没有声音", item.Message);
+        Assert.Contains("没有声音", item.Message.Zh);
     }
 
     [Fact]
@@ -115,7 +115,7 @@ public class PreflightTests
         var item = Item(await host.Preflight.RunAsync(), "audio");
 
         Assert.False(item.Ok);
-        Assert.Contains("读不到音量", item.Message);
+        Assert.Contains("读不到音量", item.Message.Zh);
     }
 
     [Fact]
@@ -153,8 +153,8 @@ public class PreflightTests
 
         Assert.False(item.Ok);
         Assert.Equal("end-previous", item.Action);
-        Assert.Contains("仍在进行", item.Message);
-        Assert.Contains("8/5/2026 Morning Service", item.Message);
+        Assert.Contains("仍在进行", item.Message.Zh);
+        Assert.Contains("8/5/2026 Morning Service", item.Message.Zh);
     }
 
     [Fact]
@@ -167,8 +167,8 @@ public class PreflightTests
         var item = Item(await host.Preflight.RunAsync(), "previousBroadcast");
 
         Assert.False(item.Ok);
-        Assert.Contains("网络", item.Message);
-        Assert.DoesNotContain("connection reset", item.Message);
+        Assert.Contains("网络", item.Message.Zh);
+        Assert.DoesNotContain("connection reset", item.Message.Zh);
     }
 
     [Fact]
@@ -195,7 +195,7 @@ public class PreflightTests
         var item = Item(await host.Preflight.RunAsync(), "auth");
 
         Assert.True(item.Ok);
-        Assert.Contains("173", item.Message);
+        Assert.Contains("173", item.Message.Zh);
     }
 
     [Fact]
@@ -208,14 +208,14 @@ public class PreflightTests
 
         Assert.False(item.Ok);
         Assert.Equal("reauthorize", item.Action);
-        Assert.Contains("10", item.Message);
+        Assert.Contains("10", item.Message.Zh);
     }
 
     [Fact]
     public async Task Auth_check_offers_reauthorization_when_invalid()
     {
         using var host = new TestHost();
-        host.YouTube.Auth = new AuthInfo(false, null, null, "授权已失效，需要重新授权。");
+        host.YouTube.Auth = new AuthInfo(false, null, null, new LiveControlPanel.Core.Msg("授权已失效，需要重新授权。", "Authorization expired."));
 
         var item = Item(await host.Preflight.RunAsync(), "auth");
 
@@ -255,8 +255,8 @@ public class PreflightTests
         var item = Item(await host.Preflight.RunAsync(), "video");
 
         Assert.False(item.Ok);
-        Assert.Contains("电视", item.Message);
-        Assert.Contains("摄像机", item.Message);
+        Assert.Contains("电视", item.Message.Zh);
+        Assert.Contains("摄像机", item.Message.Zh);
     }
 
     [Fact]
@@ -268,7 +268,7 @@ public class PreflightTests
         var item = Item(await host.Preflight.RunAsync(), "video");
 
         Assert.False(item.Ok);
-        Assert.Contains("找不到", item.Message);
+        Assert.Contains("找不到", item.Message.Zh);
     }
 
     // ---------------------------------------------------------------- never blocking
@@ -279,7 +279,7 @@ public class PreflightTests
         using var host = new TestHost();
         host.Obs.Connected = false;
         host.Obs.Inputs = new List<string>();
-        host.YouTube.Auth = new AuthInfo(false, null, null, "授权已失效。");
+        host.YouTube.Auth = new AuthInfo(false, null, null, new LiveControlPanel.Core.Msg("授权已失效。", "Authorization expired."));
         host.SetToday();
 
         var items = await host.Preflight.RunAsync();

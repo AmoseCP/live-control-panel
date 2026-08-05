@@ -57,7 +57,7 @@ public sealed class StateManager
         lock (_gate) return read(_state);
     }
 
-    public void RecordAction(string what, string? service = null) =>
+    public void RecordAction(Msg what, string? service = null) =>
         Mutate(s => s.LastAction = new LastActionState { At = DateTime.Now, What = what, Service = service });
 
     public void ApplyObsStatus(ObsStatus status) => Mutate(s =>

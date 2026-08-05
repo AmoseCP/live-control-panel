@@ -115,15 +115,15 @@ public sealed class StubSlideController : ISlideController
 
     public string ProbeCom() => "stub";
 
-    public SlideResult Next() { Calls.Add("next"); return new SlideResult(true, "已发送下一页。"); }
+    public SlideResult Next() { Calls.Add("next"); return new SlideResult(true, new Core.Msg("已发送下一页。", "Sent next slide.")); }
 
-    public SlideResult Previous() { Calls.Add("prev"); return new SlideResult(true, "已发送上一页。"); }
+    public SlideResult Previous() { Calls.Add("prev"); return new SlideResult(true, new Core.Msg("已发送上一页。", "Sent previous slide.")); }
 
     public SlideResult Goto(int slideNumber)
     {
         Calls.Add($"goto:{slideNumber}");
         return GotoSucceeds
-            ? new SlideResult(true, $"已跳转到第 {slideNumber} 页。")
-            : new SlideResult(false, "无法跳页。");
+            ? new SlideResult(true, new Core.Msg($"已跳转到第 {slideNumber} 页。", $"Jumped to slide {slideNumber}."))
+            : new SlideResult(false, new Core.Msg("无法跳页。", "Cannot jump."));
     }
 }

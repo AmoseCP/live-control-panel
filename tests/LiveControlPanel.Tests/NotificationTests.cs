@@ -61,7 +61,7 @@ public class NotificationTests
         var second = await host.Notifications.SendCurrentAsync();
 
         Assert.True(second.Ok);
-        Assert.Contains("已在", second.Message);
+        Assert.Contains("已在", second.Message.Zh);
         Assert.NotNull(host.State.Snapshot().Telegram.SentAt);
     }
 
@@ -78,11 +78,11 @@ public class NotificationTests
         var failed = await host.Notifications.SendCurrentAsync();
 
         Assert.False(failed.Ok);
-        Assert.False(string.IsNullOrWhiteSpace(failed.Message));
+        Assert.False(string.IsNullOrWhiteSpace(failed.Message.Zh));
 
         var state = host.State.Snapshot();
         Assert.Null(state.Telegram.SentAt);
-        Assert.Equal(failed.Message, state.Telegram.LastError);
+        Assert.Equal(failed.Message.Zh, state.Telegram.LastError!.Zh);
 
         // Retry after the group permission is restored.
         host.Telegram.ShouldFail = false;
@@ -101,7 +101,7 @@ public class NotificationTests
         var result = await host.Notifications.SendCurrentAsync();
 
         Assert.False(result.Ok);
-        Assert.Contains("还没有创建直播", result.Message);
+        Assert.Contains("还没有创建直播", result.Message.Zh);
         Assert.Empty(host.Telegram.Sent);
     }
 

@@ -34,11 +34,15 @@ public sealed class NotificationService
         {
             var sentAt = _state.Read(s => s.Telegram.SentAt);
             if (sentAt is not null)
-                return new TelegramResult(true, $"已在 {sentAt:HH:mm} 发送过，未重复发送。");
+                return new TelegramResult(true, new Msg(
+                    $"已在 {sentAt:HH:mm} 发送过，未重复发送。",
+                    $"Already sent at {sentAt:HH:mm}; not sent again."));
 
             var broadcast = _state.Read(s => s.Broadcast);
             if (broadcast?.WatchUrl is null)
-                return new TelegramResult(false, "还没有创建直播，暂时没有链接可以发送。");
+                return new TelegramResult(false, new Msg(
+                    "还没有创建直播，暂时没有链接可以发送。",
+                    "No broadcast has been created yet, so there is no link to send."));
 
             var settings = _config.Settings;
             var templateId = _state.Read(s => s.Today?.TemplateId);
@@ -67,7 +71,7 @@ public sealed class NotificationService
                 }
             });
 
-            if (result.Ok) _state.RecordAction("发送 Telegram 通知", broadcast.Title);
+            if (result.Ok) _state.RecordAction(new Msg("发送 Telegram 通知", "Sent the Telegram notification"), broadcast.Title);
             return result;
         }
         finally

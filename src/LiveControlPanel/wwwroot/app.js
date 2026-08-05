@@ -1,13 +1,20 @@
 /*
- * Operator page. FR 6.1: the UI is a function of state.phase and never shows an action that makes
- * no sense right now — most importantly, no "stop streaming" button when nothing is live.
+ * Operator page. FR 6.1: the UI is a function of state.phase and never shows an action that makes no
+ * sense right now — most importantly, no "stop streaming" button when nothing is live.
  *
  * FR 6.2 target: three fixed taps per service — start, notify, stop — plus page turns.
+ *
+ * Every visible string comes either from i18n.js (static text) or from a dual-language server
+ * message resolved through pick(). Nothing user-facing is written inline here.
  */
 (function () {
   'use strict';
 
   var L = window.LCP;
+  var I = window.LCP_I18N;
+  var t = I.t;
+  var pick = I.pick;
+
   var state = null;
   var lastFailedStep = null;
   var socket = null;
@@ -80,7 +87,7 @@
     if (state.today) {
       L.text('ready-title', state.today.title);
       L.text('ready-time', state.today.scheduledStart
-        ? '预定开始 ' + L.clockTime(state.today.scheduledStart)
+        ? t('ready.scheduledFor') + L.clockTime(state.today.scheduledStart)
         : '');
       L.text('live-title', state.today.title);
       L.text('ended-title', state.today.title);
@@ -111,26 +118,27 @@
     var next = state.nextService;
 
     if (!next || !next.startsAt) {
-      L.text('noschedule-heading', '本日无排期');
+      L.text('noschedule-heading', t('noschedule.heading'));
       L.text('noschedule-title', '');
-      L.text('next-service', '未来两周没有排期。');
+      L.text('next-service', t('noschedule.none'));
       L.show('btn-prepare-now', false);
       return;
     }
 
     if (!isSameDayAsServer(next.startsAt)) {
       // Either a day with no services at all, or today's service has already gone past its window.
-      L.text('noschedule-heading', '本日无排期');
+      L.text('noschedule-heading', t('noschedule.heading'));
       L.text('noschedule-title', '');
-      L.text('next-service', '下一场：' + next.title + '，' + formatWhen(next.startsAt));
+      L.text('next-service', t('noschedule.next') + next.title + '，' + formatWhen(next.startsAt));
       L.show('btn-prepare-now', false);
       return;
     }
 
-    L.text('noschedule-heading', '还没到时间');
+    L.text('noschedule-heading', t('noschedule.notYet'));
     L.text('noschedule-title', next.title);
     L.text('next-service',
-      '今天 ' + L.clockTime(next.startsAt) + ' 开始' + untilText(next.startsAt) + '。到时间会自动就绪。');
+      t('noschedule.startsToday') + L.clockTime(next.startsAt) + t('noschedule.startsAt') +
+      untilText(next.startsAt) + ' ' + t('noschedule.willBeReady'));
 
     var prepare = document.getElementById('btn-prepare-now');
     if (prepare) {
@@ -150,11 +158,16 @@
   function untilText(iso) {
     var minutes = Math.round((new Date(iso) - new Date(state.serverTime)) / 60000);
     if (isNaN(minutes) || minutes <= 0) return '';
-    if (minutes < 60) return '，还有约 ' + minutes + ' 分钟';
 
-    var hours = Math.floor(minutes / 60);
-    var rest = minutes % 60;
-    return '，还有约 ' + hours + ' 小时' + (rest > 0 ? ' ' + rest + ' 分钟' : '');
+    if (I.lang === 'en') {
+      if (minutes < 60) return ', about ' + minutes + ' min from now.';
+      var h = Math.floor(minutes / 60), m = minutes % 60;
+      return ', about ' + h + ' h' + (m > 0 ? ' ' + m + ' min' : '') + ' from now.';
+    }
+
+    if (minutes < 60) return '，还有约 ' + minutes + ' 分钟。';
+    var hours = Math.floor(minutes / 60), rest = minutes % 60;
+    return '，还有约 ' + hours + ' 小时' + (rest > 0 ? ' ' + rest + ' 分钟' : '') + '。';
   }
 
   function formatWhen(iso) {
@@ -162,12 +175,15 @@
     var date = new Date(iso);
     if (isNaN(date.getTime())) return '';
 
-    var today = new Date();
-    var sameDay = date.toDateString() === today.toDateString();
-    if (sameDay) return '今天 ' + L.clockTime(iso);
+    var today = new Date(state ? state.serverTime : Date.now());
+    if (date.toDateString() === today.toDateString()) {
+      return (I.lang === 'en' ? 'today ' : '今天 ') + L.clockTime(iso);
+    }
 
     var tomorrow = new Date(today.getTime() + 86400000);
-    if (date.toDateString() === tomorrow.toDateString()) return '明天 ' + L.clockTime(iso);
+    if (date.toDateString() === tomorrow.toDateString()) {
+      return (I.lang === 'en' ? 'tomorrow ' : '明天 ') + L.clockTime(iso);
+    }
 
     return (date.getMonth() + 1) + '/' + date.getDate() + ' ' + L.clockTime(iso);
   }
@@ -194,10 +210,10 @@
 
       var body = document.createElement('div');
       body.className = 'body';
-      body.textContent = item.message;
+      body.textContent = pick(item.message);
 
       if (item.action === 'end-previous') {
-        body.appendChild(actionButton('结束上一场直播', function (button) {
+        body.appendChild(actionButton(t('preflight.endPrevious'), function (button) {
           button.disabled = true;
           L.api.post('/api/broadcast/end-previous').then(function (result) {
             button.disabled = false;
@@ -206,7 +222,7 @@
           });
         }));
       } else if (item.action === 'reauthorize') {
-        body.appendChild(actionButton('去设置页重新授权', function () {
+        body.appendChild(actionButton(t('preflight.reauthorize'), function () {
           location.href = 'settings.html?k=' + encodeURIComponent(L.code);
         }));
       }
@@ -243,8 +259,9 @@
         : step.status === 'failed' ? '✕'
         : step.status === 'running' ? '…' : '·';
 
+      var detail = pick(step.message);
       var body = document.createElement('span');
-      body.textContent = step.name + (step.message ? '　' + step.message : '');
+      body.textContent = pick(step.name) + (detail ? '　' + detail : '');
 
       li.appendChild(mark);
       li.appendChild(body);
@@ -254,7 +271,7 @@
     // FR 4.2: retry resumes from the failed step; it must never restart from step 1.
     L.show('btn-retry', lastFailedStep !== null);
     var retry = document.getElementById('btn-retry');
-    if (retry && lastFailedStep !== null) retry.textContent = '重试第 ' + lastFailedStep + ' 步';
+    if (retry && lastFailedStep !== null) retry.textContent = t('progress.retryStep', { n: lastFailedStep });
   }
 
   function renderScenes() {
@@ -296,8 +313,11 @@
   function renderSlides() {
     var slides = state.slides || {};
     L.text('slide-pos', slides.current && slides.total
-      ? '第 ' + slides.current + ' / ' + slides.total + ' 页'
+      ? t('slides.position', { current: slides.current, total: slides.total })
       : '');
+
+    var image = document.getElementById('slide-preview-img');
+    if (image) image.setAttribute('alt', t('slides.previewAlt'));
 
     refreshPreview(slides);
   }
@@ -322,7 +342,11 @@
       return;
     }
 
-    if (previewShownFor === next) return;
+    if (previewShownFor === next) {
+      // Already showing the right slide; only the caption language may have changed.
+      L.text('slide-preview-caption', t('slides.previewCaption', { n: next }));
+      return;
+    }
     previewShownFor = next;
 
     var image = document.getElementById('slide-preview-img');
@@ -333,7 +357,7 @@
 
     image.onload = function () {
       L.show('slide-preview', true);
-      L.text('slide-preview-caption', '下一页（第 ' + next + ' 页）');
+      L.text('slide-preview-caption', t('slides.previewCaption', { n: next }));
     };
     image.onerror = function () {
       // 404 = this presentation program cannot render a slide image. Stay hidden.
@@ -346,19 +370,20 @@
   function renderStatus() {
     var obsDot = document.getElementById('dot-obs');
     if (obsDot) obsDot.className = 'dot ' + (state.obs.connected ? 'ok' : 'bad');
-    L.text('obs-text', state.obs.connected ? 'OBS 已连接' : 'OBS 未连接（请打开 OBS）');
+    L.text('obs-text', t(state.obs.connected ? 'status.obsConnected' : 'status.obsDisconnected'));
 
     var auth = state.auth || {};
     var authDot = document.getElementById('dot-auth');
     if (authDot) authDot.className = 'dot ' + (auth.valid ? 'ok' : 'bad');
-    L.text('auth-text', auth.valid
-      ? '授权有效' + (auth.expiresInDays != null ? '（剩余约 ' + auth.expiresInDays + ' 天）' : '')
-      : '授权需要处理');
+    L.text('auth-text', !auth.valid ? t('status.authProblem')
+      : auth.expiresInDays != null ? t('status.authValidDays', { n: auth.expiresInDays })
+      : t('status.authValid'));
 
     // FR 8: seven people share this PC, so "who did what, when" has to be on screen.
     if (state.lastAction) {
-      L.text('last-action', '上次操作：' + L.clockTime(state.lastAction.at) + ' ' +
-        state.lastAction.what + (state.lastAction.service ? '（' + state.lastAction.service + '）' : ''));
+      L.text('last-action', t('status.lastAction') + L.clockTime(state.lastAction.at) + ' ' +
+        pick(state.lastAction.what) +
+        (state.lastAction.service ? '（' + state.lastAction.service + '）' : ''));
     }
   }
 
@@ -366,25 +391,28 @@
     var button = document.getElementById('btn-telegram');
     if (!button) return;
 
-    var sentAt = state.telegram && state.telegram.sentAt;
-    button.textContent = sentAt
-      ? '已发送到 Telegram（' + L.clockTime(sentAt) + '）'
-      : '发送链接到 Telegram';
-    button.classList.toggle('primary', !sentAt);
+    var telegram = state.telegram || {};
+    var sentAt = telegram.sentAt;
 
-    if (state.telegram && state.telegram.lastError) {
-      button.textContent = '重试发送到 Telegram';
+    if (telegram.lastError) {
+      button.textContent = t('live.retryTelegram');
       button.classList.add('danger');
-    } else {
-      button.classList.remove('danger');
+      button.classList.remove('primary');
+      return;
     }
+
+    button.classList.remove('danger');
+    button.textContent = sentAt
+      ? t('live.sentTelegram', { time: L.clockTime(sentAt) })
+      : t('live.sendTelegram');
+    button.classList.toggle('primary', !sentAt);
   }
 
   /* ---- actions ----------------------------------------------------------- */
 
   function report(result) {
     var data = result.data || {};
-    var message = data.message || (result.ok ? '完成。' : '操作失败，请重试。');
+    var message = pick(data.message) || t(result.ok ? 'generic.done' : 'generic.failed');
     L.toast(message, data.ok === false || !result.ok ? 'bad' : 'good');
   }
 
@@ -394,14 +422,18 @@
     });
   }
 
+  L.on('btn-lang', function () { I.toggle(); });
+
+  // Re-render from the last state so everything built from data follows the switch too.
+  window.LCP_onLanguageChange = function () { if (state) render(state); };
+
   L.on('btn-start', function () {
     var button = document.getElementById('btn-start');
     button.disabled = true;
-    button.textContent = '正在开始…';
 
     L.api.post('/api/broadcast/start-today').then(function (result) {
       button.disabled = false;
-      button.textContent = '开始今天的直播';
+      button.textContent = t('ready.start');
       report(result);
     });
   });
@@ -413,7 +445,7 @@
 
   // FR 4.3: a real confirmation in front of the only irreversible action on the page.
   L.on('btn-stop', function () {
-    if (!window.confirm('确定要结束这场直播吗？结束后无法继续。')) return;
+    if (!window.confirm(t('live.confirmStop'))) return;
     L.api.post('/api/broadcast/stop', { confirm: true }).then(report);
   });
 
@@ -431,7 +463,9 @@
   // Page turns happen dozens of times per sermon; only surface failures.
   function quietReport(result) {
     var data = result.data || {};
-    if (data.ok === false || !result.ok) L.toast(data.message || '翻页失败。', 'bad');
+    if (data.ok === false || !result.ok) {
+      L.toast(pick(data.message) || t('generic.pageTurnFailed'), 'bad');
+    }
   }
 
   L.on('btn-refresh', refreshPreflight);
@@ -451,7 +485,7 @@
   L.on('btn-prepare-now', function () {
     var button = document.getElementById('btn-prepare-now');
     var templateId = button && button.dataset.templateId;
-    if (!templateId) { L.toast('暂时无法确定是哪一场，请用「手动选择一场」。', 'bad'); return; }
+    if (!templateId) { L.toast(t('picker.titleRequired'), 'bad'); return; }
 
     L.api.post('/api/broadcast/create', { templateId: templateId }).then(function (result) {
       report(result);
@@ -497,7 +531,7 @@
   L.on('btn-create-custom', function () {
     var input = document.getElementById('custom-title');
     var title = input ? input.value.trim() : '';
-    if (!title) { L.toast('请先填写标题。', 'bad'); return; }
+    if (!title) { L.toast(t('picker.titleRequired'), 'bad'); return; }
 
     L.api.post('/api/broadcast/create', { templateId: 'custom', title: title }).then(function (result) {
       report(result);
@@ -511,14 +545,15 @@
 
   /* ---- boot -------------------------------------------------------------- */
 
+  I.apply();
+
   if (!L.code) {
-    L.toast('缺少访问码。请扫描管理员提供的二维码打开本页。', 'bad');
+    L.toast(t('generic.noAccessCode'), 'bad');
   }
 
   L.api.get('/api/state').then(function (result) {
     if (result.status === 403) {
-      L.toast((result.data && result.data.message) ||
-        '访问码无效。请重新扫描二维码打开本页。', 'bad');
+      L.toast(pick(result.data && result.data.message) || t('generic.badAccessCode'), 'bad');
       return;
     }
     if (result.data) render(result.data);

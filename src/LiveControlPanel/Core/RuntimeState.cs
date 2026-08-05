@@ -80,14 +80,14 @@ public sealed class SlidesState
 public sealed class TelegramState
 {
     public DateTime? SentAt { get; set; }
-    public string? LastError { get; set; }
+    public Msg? LastError { get; set; }
 }
 
 public sealed class PreflightItem
 {
     public string Key { get; set; } = "";
     public bool Ok { get; set; }
-    public string Message { get; set; } = "";
+    public Msg Message { get; set; } = Msg.Empty;
 
     /// <summary>An action the operator can take from the panel, e.g. "end-previous".</summary>
     public string? Action { get; set; }
@@ -104,18 +104,18 @@ public sealed class AuthState
 public sealed class StepState
 {
     public int Step { get; set; }
-    public string Name { get; set; } = "";
+    public Msg Name { get; set; } = Msg.Empty;
 
     /// <summary>pending | running | done | skipped | failed</summary>
     public string Status { get; set; } = "pending";
 
-    public string? Message { get; set; }
+    public Msg? Message { get; set; }
 }
 
 public sealed class LastActionState
 {
     public DateTime At { get; set; }
-    public string What { get; set; } = "";
+    public Msg What { get; set; } = Msg.Empty;
     public string? Service { get; set; }
 }
 

@@ -3,148 +3,152 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>设置 · 直播控制面板</title>
+  <title data-i18n-title="settings.title">设置 · 直播控制面板</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<h1>设置</h1>
-<button class="ghost" id="btn-back">← 返回控制面板</button>
+<div class="titlebar">
+  <h1 data-i18n="settings.otherHeadingTitle">设置</h1>
+  <button id="btn-lang" class="lang">English</button>
+</div>
+<button class="ghost" id="btn-back" data-i18n="settings.back">← 返回控制面板</button>
 
 <!-- PIN gate: guards against mis-edits by seven people sharing one PC, not against attackers -->
 <section id="pin-card" class="card">
-  <h2>请输入设置密码</h2>
-  <input type="password" id="pin" inputmode="numeric" autocomplete="off" placeholder="四到六位数字">
-  <button class="primary" id="btn-unlock" style="margin-top:10px">解锁</button>
-  <p class="subtle" style="margin-bottom:0">
-    默认密码 <strong>0000</strong>。改过之后忘记了，可以在直播电脑上打开
-    <code>%ProgramData%\LiveControlPanel\settings.json</code>，看 <code>settingsPin</code> 一项；
-    日志 <code>logs\panel-&lt;日期&gt;.log</code> 每次启动也会写一行。
-  </p>
+  <h2 data-i18n="settings.pinHeading">请输入设置密码</h2>
+  <input type="password" id="pin" inputmode="numeric" autocomplete="off"
+         data-i18n-placeholder="settings.pinPlaceholder" placeholder="四到六位数字">
+  <button class="primary" id="btn-unlock" style="margin-top:10px" data-i18n="settings.unlock">解锁</button>
+  <p class="subtle" style="margin-bottom:0" data-i18n="settings.pinHint" data-i18n-html="1"></p>
 </section>
 
 <div id="settings-body" class="hidden">
 
   <section class="card">
-    <h2>访问地址与二维码</h2>
+    <h2 data-i18n="settings.accessHeading">访问地址与二维码</h2>
     <div id="access-addresses"></div>
     <div class="qr" id="qr-holder" style="margin-top:10px"></div>
-    <p class="subtle">让操作员用 iPad 扫这个码，然后「添加到主屏幕」。</p>
+    <p class="subtle" data-i18n="settings.accessHint">让操作员用 iPad 扫这个码，然后「添加到主屏幕」。</p>
   </section>
 
   <section class="card">
-    <h2>YouTube 授权</h2>
-    <label for="yt-client-id">Client ID</label>
+    <h2 data-i18n="settings.authHeading">YouTube 授权</h2>
+    <label for="yt-client-id" data-i18n="settings.clientId">Client ID</label>
     <input type="text" id="yt-client-id" autocomplete="off">
-    <label for="yt-client-secret">Client Secret</label>
+    <label for="yt-client-secret" data-i18n="settings.clientSecret">Client Secret</label>
     <input type="password" id="yt-client-secret" autocomplete="off">
     <div class="stack" style="margin-top:12px">
-      <button id="btn-authorize">开始授权 / 重新授权</button>
-      <button class="ghost" id="btn-revoke">清除现有授权</button>
+      <button id="btn-authorize" data-i18n="settings.authorize">开始授权 / 重新授权</button>
+      <button class="ghost" id="btn-revoke" data-i18n="settings.revoke">清除现有授权</button>
     </div>
     <p class="subtle" id="auth-status"></p>
   </section>
 
   <section class="card">
-    <h2>推流密钥（一次性）</h2>
-    <p class="subtle">创建一次即可长期使用，此后每场直播只做绑定，OBS 里不必再改。</p>
-    <p class="subtle">当前 streamId：<span id="stream-id">—</span></p>
-    <button id="btn-create-key">创建可复用推流密钥</button>
+    <h2 data-i18n="settings.keyHeading">推流密钥（一次性）</h2>
+    <p class="subtle" data-i18n="settings.keyHint">创建一次即可长期使用，此后每场直播只做绑定，OBS 里不必再改。</p>
+    <p class="subtle"><span data-i18n="settings.keyCurrent">当前 streamId：</span><span id="stream-id">—</span></p>
+    <button id="btn-create-key" data-i18n="settings.keyCreate">创建可复用推流密钥</button>
     <div id="stream-key-result" class="hidden" style="margin-top:10px">
-      <label>推流地址（填入 OBS「服务器」）</label>
+      <label data-i18n="settings.keyAddress">推流地址（填入 OBS「服务器」）</label>
       <div class="linkbox" id="ingest-address"></div>
-      <label>串流密钥（填入 OBS「串流密钥」）</label>
+      <label data-i18n="settings.keyValue">串流密钥（填入 OBS「串流密钥」）</label>
       <div class="linkbox" id="ingest-key"></div>
-      <button style="margin-top:10px" id="btn-copy-key">复制串流密钥</button>
+      <button style="margin-top:10px" id="btn-copy-key" data-i18n="settings.keyCopy">复制串流密钥</button>
     </div>
   </section>
 
   <section class="card">
-    <h2>Telegram</h2>
-    <label for="tg-token">Bot Token</label>
+    <h2 data-i18n="settings.telegramHeading">Telegram</h2>
+    <label for="tg-token" data-i18n="settings.telegramToken">Bot Token</label>
     <input type="password" id="tg-token" autocomplete="off">
-    <label for="tg-chat">群 ID（负数；超级群以 -100 开头）</label>
+    <label for="tg-chat" data-i18n="settings.telegramChat">群 ID（负数；超级群以 -100 开头）</label>
     <input type="text" id="tg-chat" inputmode="text" autocomplete="off">
-    <label for="tg-message">消息模板（可用 {title} 与 {url}）</label>
+    <label for="tg-message" data-i18n="settings.telegramTemplate">消息模板（可用 {title} 与 {url}）</label>
     <textarea id="tg-message"></textarea>
-    <button style="margin-top:10px" id="btn-test-telegram">发送测试消息</button>
+    <button style="margin-top:10px" id="btn-test-telegram" data-i18n="settings.telegramTest">发送测试消息</button>
   </section>
 
   <section class="card">
-    <h2>OBS</h2>
-    <label for="obs-url">WebSocket 地址</label>
+    <h2 data-i18n="settings.obsHeading">OBS</h2>
+    <label for="obs-url" data-i18n="settings.obsUrl">WebSocket 地址</label>
     <input type="text" id="obs-url">
-    <label for="obs-password">WebSocket 密码</label>
+    <label for="obs-password" data-i18n="settings.obsPassword">WebSocket 密码</label>
     <input type="password" id="obs-password" autocomplete="off">
-    <label for="obs-scene-camera">摄像机场景名</label>
+    <label for="obs-scene-camera" data-i18n="settings.obsSceneCamera">摄像机场景名</label>
     <input type="text" id="obs-scene-camera">
-    <label for="obs-scene-slides">幻灯片场景名</label>
+    <label for="obs-scene-slides" data-i18n="settings.obsSceneSlides">幻灯片场景名</label>
     <input type="text" id="obs-scene-slides">
-    <label for="obs-audio">音频输入名（用于自检）</label>
+    <label for="obs-audio" data-i18n="settings.obsAudio">音频输入名（用于自检）</label>
     <input type="text" id="obs-audio">
-    <label for="obs-video">画面来源名（用于自检，多个用逗号分隔）</label>
+    <label for="obs-video" data-i18n="settings.obsVideo">画面来源名（用于自检，多个用逗号分隔）</label>
     <input type="text" id="obs-video">
-    <button class="ghost" style="margin-top:10px" id="btn-list-inputs">列出 OBS 里的输入名</button>
+    <button class="ghost" style="margin-top:10px" id="btn-list-inputs"
+            data-i18n="settings.obsListInputs">列出 OBS 里的输入名</button>
     <pre class="linkbox hidden" id="obs-inputs" style="margin-top:10px"></pre>
   </section>
 
   <section class="card">
-    <h2>幻灯片控制</h2>
-    <p class="subtle" style="margin-top:0">
-      默认<strong>不开启</strong>。开启前请先让 WPS 进入放映，点「检测可用性」看清哪条路能用 ——
-      有些放映程序忽略投递的按键，只有自动化接口有效；也可能反过来。不开启时操作页不会出现翻页按钮。
-    </p>
+    <h2 data-i18n="settings.slidesHeading">幻灯片控制</h2>
+    <p class="subtle" style="margin-top:0" data-i18n="settings.slidesHint" data-i18n-html="1"></p>
     <label style="display:flex;align-items:center;gap:10px;font-size:1rem;color:var(--text)">
       <input type="checkbox" id="slides-enabled" style="width:22px;height:22px;min-height:0">
-      启用幻灯片控制
+      <span data-i18n="settings.slidesEnable">启用幻灯片控制</span>
     </label>
-    <button class="ghost" style="margin-top:10px" id="btn-probe-com">检测可用性</button>
+    <button class="ghost" style="margin-top:10px" id="btn-probe-com" data-i18n="settings.slidesProbe">检测可用性</button>
     <pre class="linkbox hidden" id="com-probe-out" style="margin-top:10px;white-space:pre-wrap"></pre>
 
-    <label for="slides-class">窗口类名</label>
+    <label for="slides-class" data-i18n="settings.slidesClass">窗口类名</label>
     <input type="text" id="slides-class">
-    <label for="slides-title">窗口标题正则（可留空）</label>
+    <label for="slides-title" data-i18n="settings.slidesTitle">窗口标题正则（可留空）</label>
     <input type="text" id="slides-title">
-    <label for="slides-strategy">发送方式</label>
+    <label for="slides-strategy" data-i18n="settings.slidesStrategy">发送方式</label>
     <select id="slides-strategy">
-      <option value="PostMessage">PostMessage（默认，不抢焦点）</option>
-      <option value="SendInput">SendInput（回退方案，会短暂抢焦点）</option>
+      <option value="PostMessage" data-i18n="settings.slidesPostMessage">PostMessage（默认，不抢焦点）</option>
+      <option value="SendInput" data-i18n="settings.slidesSendInput">SendInput（回退方案，会短暂抢焦点）</option>
     </select>
-    <button class="ghost" style="margin-top:10px" id="btn-list-windows">列出所有窗口</button>
+    <button class="ghost" style="margin-top:10px" id="btn-list-windows"
+            data-i18n="settings.slidesListWindows">列出所有窗口</button>
     <div id="windows-list" style="margin-top:10px"></div>
   </section>
 
   <section class="card">
-    <h2>其他</h2>
-    <label for="default-description">默认简介</label>
+    <h2 data-i18n="settings.otherHeading">其他</h2>
+    <label for="default-description" data-i18n="settings.defaultDescription">默认简介</label>
     <textarea id="default-description"></textarea>
-    <label for="default-thumbnail">默认封面文件（相对数据目录）</label>
+    <label for="default-thumbnail" data-i18n="settings.defaultThumbnail">默认封面文件（相对数据目录）</label>
     <input type="text" id="default-thumbnail">
-    <label for="window-before">匹配窗口：开始前多少分钟</label>
+    <label for="window-before" data-i18n="settings.windowBefore">匹配窗口：开始前多少分钟</label>
     <input type="number" id="window-before" min="0" max="720">
-    <label for="window-after">匹配窗口：开始后多少分钟</label>
+    <label for="window-after" data-i18n="settings.windowAfter">匹配窗口：开始后多少分钟</label>
     <input type="number" id="window-after" min="0" max="720">
-    <label for="new-pin">修改设置密码（留空则不改）</label>
+    <label for="new-pin" data-i18n="settings.newPin">修改设置密码（留空则不改）</label>
     <input type="password" id="new-pin" autocomplete="off">
   </section>
 
   <section class="card">
-    <h2>场次</h2>
+    <h2 data-i18n="settings.templatesHeading">场次</h2>
     <table class="templates">
-      <thead><tr><th>名称</th><th>星期</th><th>时间</th></tr></thead>
+      <thead><tr>
+        <th data-i18n="settings.colName">名称</th>
+        <th data-i18n="settings.colWeekdays">星期</th>
+        <th data-i18n="settings.colTime">时间</th>
+      </tr></thead>
       <tbody id="templates-body"></tbody>
     </table>
-    <p class="subtle">星期：0=周日 … 6=周六。修改场次请直接编辑服务器上的 templates.json 后重启服务。</p>
+    <p class="subtle" data-i18n="settings.templatesNote">星期：0=周日 … 6=周六。修改场次请直接编辑服务器上的 templates.json 后重启服务。</p>
   </section>
 
   <section class="card">
-    <button class="primary" id="btn-save">保存设置</button>
+    <button class="primary" id="btn-save" data-i18n="settings.save">保存设置</button>
   </section>
 
 </div>
 
 <div id="toast" class="hidden"></div>
 
+<script src="i18n.js"></script>
 <script src="common.js"></script>
 <script src="settings.js"></script>
 </body>

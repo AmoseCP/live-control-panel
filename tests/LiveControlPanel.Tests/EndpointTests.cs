@@ -169,7 +169,7 @@ public sealed class EndpointTests : IAsyncLifetime
         var state = await _client.GetFromJsonAsync<RuntimeState>($"/api/preflight?k={_code}", Json.Options);
 
         Assert.Equal(5, state!.Preflight.Count);
-        Assert.All(state.Preflight, item => Assert.False(string.IsNullOrWhiteSpace(item.Message)));
+        Assert.All(state.Preflight, item => Assert.False(string.IsNullOrWhiteSpace(item.Message.Zh)));
     }
 
     // ---------------------------------------------------------------- broadcast
@@ -182,7 +182,7 @@ public sealed class EndpointTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<ApiResult>();
-        Assert.Contains("确认", body!.Message);
+        Assert.Contains("确认", body!.Message.Zh);
     }
 
     [Fact]
@@ -440,7 +440,7 @@ public sealed class EndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Forbidden, badCode.StatusCode);
         var codeBody = await badCode.Content.ReadFromJsonAsync<GateResult>();
         Assert.Equal(GateResult.BadAccessCode, codeBody!.Reason);
-        Assert.Contains("访问码", codeBody.Message);
+        Assert.Contains("访问码", codeBody.Message.Zh);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/settings?k={_code}");
         request.Headers.Add(AccessGate.PinHeader, "999999");
@@ -448,7 +448,7 @@ public sealed class EndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Forbidden, badPin.StatusCode);
         var pinBody = await badPin.Content.ReadFromJsonAsync<GateResult>();
         Assert.Equal(GateResult.PinRequired, pinBody!.Reason);
-        Assert.Contains("密码", pinBody.Message);
+        Assert.Contains("密码", pinBody.Message.Zh);
 
         Assert.NotEqual(codeBody.Reason, pinBody.Reason);
     }
@@ -548,7 +548,7 @@ public sealed class EndpointTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<ApiResult>();
-        Assert.Contains("Client ID", body!.Message);
+        Assert.Contains("Client ID", body!.Message.Zh);
     }
 
     // ---------------------------------------------------------------- telegram
@@ -560,6 +560,6 @@ public sealed class EndpointTests : IAsyncLifetime
 
         var body = await response.Content.ReadFromJsonAsync<ApiResult>();
         Assert.False(body!.Ok);
-        Assert.Contains("还没有创建直播", body.Message);
+        Assert.Contains("还没有创建直播", body.Message.Zh);
     }
 }

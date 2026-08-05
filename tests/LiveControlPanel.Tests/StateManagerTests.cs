@@ -167,11 +167,11 @@ public class StateManagerTests
     {
         using var host = new TestHost();
 
-        host.State.RecordAction("开始直播", "8/5/2026 Wednesday Service");
+        host.State.RecordAction(new Msg("开始直播", "Started"), "8/5/2026 Wednesday Service");
 
         var action = host.State.Snapshot().LastAction;
         Assert.NotNull(action);
-        Assert.Equal("开始直播", action!.What);
+        Assert.Equal("开始直播", action!.What.Zh);
         Assert.Equal("8/5/2026 Wednesday Service", action.Service);
         Assert.True((DateTime.Now - action.At).Duration() < TimeSpan.FromMinutes(1));
     }
@@ -196,7 +196,7 @@ public class StateManagerTests
     {
         using var host = new TestHost();
 
-        Parallel.For(0, 200, i => host.State.RecordAction($"action-{i}"));
+        Parallel.For(0, 200, i => host.State.RecordAction(Msg.Same($"action-{i}")));
 
         Assert.NotNull(host.State.Snapshot().LastAction);
     }

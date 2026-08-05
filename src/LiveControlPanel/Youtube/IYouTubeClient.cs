@@ -4,7 +4,7 @@ public sealed record BroadcastInfo(string Id, string Title, string LifeCycleStat
 
 public sealed record StreamKeyInfo(string StreamId, string IngestionKey, string IngestionAddress);
 
-public sealed record AuthInfo(bool Valid, int? ExpiresInDays, DateTime? AuthorizedAt, string? Message);
+public sealed record AuthInfo(bool Valid, int? ExpiresInDays, DateTime? AuthorizedAt, LiveControlPanel.Core.Msg? Message);
 
 public sealed record CreateBroadcastRequest(
     string Title,

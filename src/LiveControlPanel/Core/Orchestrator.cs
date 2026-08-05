@@ -4,7 +4,7 @@ using LiveControlPanel.Youtube;
 
 namespace LiveControlPanel.Core;
 
-public sealed record StartOutcome(bool Ok, int? FailedStep, string Message);
+public sealed record StartOutcome(bool Ok, int? FailedStep, Msg Message);
 
 /// <summary>
 /// The six-step start-today sequence of FR 4.2.
@@ -28,14 +28,14 @@ public sealed class Orchestrator
     public const int StepStream = 5;
     public const int StepAwaitLive = 6;
 
-    private static readonly (int Step, string Name)[] StepNames =
+    private static readonly (int Step, Msg Name)[] StepNames =
     {
-        (StepCreate, "创建直播"),
-        (StepBind, "绑定推流密钥"),
-        (StepThumbnail, "上传封面"),
-        (StepScene, "切换画面"),
-        (StepStream, "开始推流"),
-        (StepAwaitLive, "等待 YouTube 上线"),
+        (StepCreate, new Msg("创建直播", "Create broadcast")),
+        (StepBind, new Msg("绑定推流密钥", "Bind stream key")),
+        (StepThumbnail, new Msg("上传封面", "Upload thumbnail")),
+        (StepScene, new Msg("切换画面", "Switch scene")),
+        (StepStream, new Msg("开始推流", "Start streaming")),
+        (StepAwaitLive, new Msg("等待 YouTube 上线", "Wait for YouTube to go live")),
     };
 
     private static readonly TimeSpan LivePollInterval = TimeSpan.FromSeconds(2);
@@ -70,14 +70,16 @@ public sealed class Orchestrator
         if (!await _runGate.WaitAsync(0, ct).ConfigureAwait(false))
         {
             // Not an error: the operator tapped twice. Report the run already in flight.
-            return new StartOutcome(true, null, "正在开始直播，请稍候…");
+            return new StartOutcome(true, null, new Msg("正在开始直播，请稍候…", "Starting the broadcast, please wait…"));
         }
 
         try
         {
             var today = _state.Read(s => s.Today);
             if (today?.Title is null)
-                return new StartOutcome(false, null, "今天没有排期。请先在「不是这一场？」里选择要开始的场次。");
+                return new StartOutcome(false, null, new Msg(
+                    "今天没有排期。请先选择要开始的场次。",
+                    "Nothing is scheduled. Pick the service you want to start first."));
 
             _state.Mutate(s =>
             {
@@ -118,16 +120,16 @@ public sealed class Orchestrator
                 var friendly = FriendlyError.Describe(ex);
                 _log.LogError(ex, "start-today failed at step {Step}", step);
                 SetStep(step, "failed", friendly);
-                _state.RecordAction($"开播失败（第 {step} 步）", today.Title);
+                _state.RecordAction(new Msg($"开播失败（第 {step} 步）", $"Start failed at step {step}"), today.Title);
                 return new StartOutcome(false, step, friendly);
             }
         }
 
-        _state.RecordAction("开始直播", today.Title);
-        return new StartOutcome(true, null, "直播已开始。");
+        _state.RecordAction(new Msg("开始直播", "Started the broadcast"), today.Title);
+        return new StartOutcome(true, null, new Msg("直播已开始。", "The broadcast has started."));
     }
 
-    private sealed record StepMessage(string? Text, bool Skipped = false);
+    private sealed record StepMessage(Msg? Text, bool Skipped = false);
 
     private async Task<StepMessage> RunStepAsync(
         int step, TodayState today, ServiceTemplate? template, CancellationToken ct) => step switch
@@ -147,7 +149,7 @@ public sealed class Orchestrator
     {
         // Idempotency anchor: a broadcast already exists, so never insert a second one.
         var existing = _state.Read(s => s.Broadcast);
-        if (existing?.Id is not null) return new StepMessage($"已存在直播 {existing.Id}", Skipped: true);
+        if (existing?.Id is not null) return new StepMessage(new Msg($"已存在直播 {existing.Id}", $"Broadcast {existing.Id} already exists"), Skipped: true);
 
         var settings = _config.Settings;
         var description = Coalesce(today.Description,
@@ -174,66 +176,68 @@ public sealed class Orchestrator
             Title = info.Title,
         });
 
-        return new StepMessage($"已创建 {info.Id}");
+        return new StepMessage(new Msg($"已创建 {info.Id}", $"Created {info.Id}"));
     }
 
     private async Task<StepMessage> BindAsync(CancellationToken ct)
     {
         var broadcast = RequireBroadcast();
         if (broadcast.Status is not BroadcastStatus.Created)
-            return new StepMessage("已绑定", Skipped: true);
+            return new StepMessage(new Msg("已绑定", "Already bound"), Skipped: true);
 
         var streamId = _config.Settings.StreamId;
         if (string.IsNullOrWhiteSpace(streamId))
-            throw new InvalidOperationException(
-                "还没有创建推流密钥。请让管理员在设置页点击「创建推流密钥」，并把密钥填进 OBS。");
+            throw new LocalizedInvalidOperationException(new Msg(
+                "还没有创建推流密钥。请让管理员在设置页点击「创建推流密钥」，并把密钥填进 OBS。",
+                "No stream key has been created yet. Ask the administrator to create one on the settings " +
+                "page and enter it in OBS."));
 
         await _youtube.BindStreamAsync(broadcast.Id!, streamId, ct).ConfigureAwait(false);
         _state.Mutate(s => s.Broadcast!.Status = BroadcastStatus.Bound);
-        return new StepMessage("已绑定推流密钥");
+        return new StepMessage(new Msg("已绑定推流密钥", "Stream key bound"));
     }
 
     private async Task<StepMessage> ThumbnailAsync(ServiceTemplate? template, CancellationToken ct)
     {
         var broadcast = RequireBroadcast();
-        if (broadcast.ThumbnailUploaded) return new StepMessage("封面已上传", Skipped: true);
+        if (broadcast.ThumbnailUploaded) return new StepMessage(new Msg("封面已上传", "Thumbnail already uploaded"), Skipped: true);
 
         var relative = Coalesce(template?.ThumbnailFile, _config.Settings.DefaultThumbnail);
-        if (string.IsNullOrWhiteSpace(relative)) return new StepMessage("未配置封面", Skipped: true);
+        if (string.IsNullOrWhiteSpace(relative)) return new StepMessage(new Msg("未配置封面", "No thumbnail configured"), Skipped: true);
 
         var path = _config.Paths.Resolve(relative);
         if (!File.Exists(path))
         {
             // A missing thumbnail is cosmetic; refusing to go live over it would be absurd.
             _log.LogWarning("Thumbnail {Path} not found; skipping upload", path);
-            return new StepMessage("找不到封面文件，已跳过", Skipped: true);
+            return new StepMessage(new Msg("找不到封面文件，已跳过", "Thumbnail file not found; skipped"), Skipped: true);
         }
 
         await using var stream = File.OpenRead(path);
         await _youtube.SetThumbnailAsync(broadcast.Id!, stream, ContentType(path), ct).ConfigureAwait(false);
         _state.Mutate(s => s.Broadcast!.ThumbnailUploaded = true);
-        return new StepMessage("封面已上传");
+        return new StepMessage(new Msg("封面已上传", "Thumbnail uploaded"));
     }
 
     private async Task<StepMessage> SceneAsync(CancellationToken ct)
     {
         var scene = _config.Settings.Obs.SceneCamera;
-        if (string.IsNullOrWhiteSpace(scene)) return new StepMessage("未配置起始画面", Skipped: true);
+        if (string.IsNullOrWhiteSpace(scene)) return new StepMessage(new Msg("未配置起始画面", "No starting scene configured"), Skipped: true);
 
         if (string.Equals(_obs.Status.CurrentScene, scene, StringComparison.Ordinal))
-            return new StepMessage($"已在「{scene}」", Skipped: true);
+            return new StepMessage(new Msg($"已在「{scene}」", $"Already on \"{scene}\""), Skipped: true);
 
         await _obs.SetSceneAsync(scene, ct).ConfigureAwait(false);
-        return new StepMessage($"已切到「{scene}」");
+        return new StepMessage(new Msg($"已切到「{scene}」", $"Switched to \"{scene}\""));
     }
 
     private async Task<StepMessage> StreamAsync(CancellationToken ct)
     {
         // Idempotency: OBS is already sending, so do not restart the output.
-        if (_obs.Status.Streaming) return new StepMessage("已在推流", Skipped: true);
+        if (_obs.Status.Streaming) return new StepMessage(new Msg("已在推流", "Already streaming"), Skipped: true);
 
         await _obs.StartStreamAsync(ct).ConfigureAwait(false);
-        return new StepMessage("已开始推流");
+        return new StepMessage(new Msg("已开始推流", "Streaming started"));
     }
 
     /// <summary>
@@ -243,7 +247,7 @@ public sealed class Orchestrator
     private async Task<StepMessage> AwaitLiveAsync(CancellationToken ct)
     {
         var broadcast = RequireBroadcast();
-        if (broadcast.Status == BroadcastStatus.Live) return new StepMessage("已上线", Skipped: true);
+        if (broadcast.Status == BroadcastStatus.Live) return new StepMessage(new Msg("已上线", "Already live"), Skipped: true);
 
         var deadline = DateTime.UtcNow + LivePollTimeout;
 
@@ -254,7 +258,7 @@ public sealed class Orchestrator
             if (status == "live")
             {
                 _state.Mutate(s => s.Broadcast!.Status = BroadcastStatus.Live);
-                return new StepMessage("YouTube 已上线");
+                return new StepMessage(new Msg("YouTube 已上线", "YouTube is live"));
             }
 
             if (status == "testing")
@@ -263,9 +267,10 @@ public sealed class Orchestrator
             await Task.Delay(LivePollInterval, ct).ConfigureAwait(false);
         }
 
-        throw new TimeoutException(
-            "YouTube 还没有确认收到画面。推流可能仍在建立，请稍等十几秒后点「重试这一步」；" +
-            "若持续如此，请检查网络。");
+        throw new LocalizedTimeoutException(new Msg(
+            "YouTube 还没有确认收到画面。推流可能仍在建立，请稍等十几秒后点「重试这一步」；若持续如此，请检查网络。",
+            "YouTube has not confirmed it is receiving video yet. The stream may still be establishing — " +
+            "wait about fifteen seconds and retry this step; if it persists, check the network."));
     }
 
     // ---------------------------------------------------------------- stop / cleanup
@@ -282,8 +287,9 @@ public sealed class Orchestrator
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Stopping the OBS stream failed");
-            return new StartOutcome(false, null,
-                "无法让 OBS 停止推流。请直接在 OBS 里点「停止推流」，然后再回到本页结束直播。");
+            return new StartOutcome(false, null, new Msg(
+                "无法让 OBS 停止推流。请直接在 OBS 里点「停止推流」，然后再回到本页结束直播。",
+                "OBS would not stop streaming. Stop it directly in OBS, then come back here to end the broadcast."));
         }
 
         if (broadcast?.Id is not null)
@@ -302,16 +308,18 @@ public sealed class Orchestrator
                 {
                     if (s.Broadcast is not null) s.Broadcast.Status = BroadcastStatus.Complete;
                 });
-                _state.RecordAction("停止直播（YouTube 未确认）", broadcast.Title);
-                return new StartOutcome(false, null,
-                    "推流已停止，但 YouTube 那边没有确认结束。请稍后在 YouTube Studio 里确认这场已结束。");
+                _state.RecordAction(new Msg("停止直播（YouTube 未确认）", "Stopped (YouTube unconfirmed)"), broadcast.Title);
+                return new StartOutcome(false, null, new Msg(
+                    "推流已停止，但 YouTube 那边没有确认结束。请稍后在 YouTube Studio 里确认这场已结束。",
+                    "Streaming has stopped, but YouTube did not confirm the broadcast ended. Check in " +
+                    "YouTube Studio later that it shows as finished."));
             }
 
             _state.Mutate(s => s.Broadcast!.Status = BroadcastStatus.Complete);
         }
 
-        _state.RecordAction("停止直播", broadcast?.Title);
-        return new StartOutcome(true, null, "直播已结束。");
+        _state.RecordAction(new Msg("停止直播", "Stopped the broadcast"), broadcast?.Title);
+        return new StartOutcome(true, null, new Msg("直播已结束。", "The broadcast has ended."));
     }
 
     /// <summary>FR 4.4 one-click fix for the leftover-broadcast case.</summary>
@@ -330,10 +338,12 @@ public sealed class Orchestrator
                 ended++;
             }
 
-            _state.RecordAction($"结束遗留直播 {ended} 场");
+            _state.RecordAction(new Msg($"结束遗留直播 {ended} 场", $"Ended {ended} leftover broadcast(s)"));
             return ended == 0
-                ? new StartOutcome(true, null, "没有需要结束的直播。")
-                : new StartOutcome(true, null, $"已结束 {ended} 场未完成的直播，现在可以开始今天的直播了。");
+                ? new StartOutcome(true, null, new Msg("没有需要结束的直播。", "There was nothing to end."))
+                : new StartOutcome(true, null, new Msg(
+                    $"已结束 {ended} 场未完成的直播，现在可以开始今天的直播了。",
+                    $"Ended {ended} unfinished broadcast(s). You can start today's broadcast now."));
         }
         catch (Exception ex)
         {
@@ -366,9 +376,11 @@ public sealed class Orchestrator
     private BroadcastState RequireBroadcast() =>
         _state.Read(s => s.Broadcast) is { Id: not null } broadcast
             ? broadcast
-            : throw new InvalidOperationException("还没有创建直播，请从第 1 步重试。");
+            : throw new LocalizedInvalidOperationException(new Msg(
+                "还没有创建直播，请从第 1 步重试。",
+                "No broadcast has been created yet. Retry from step 1."));
 
-    private void SetStep(int step, string status, string? message) => _state.Mutate(s =>
+    private void SetStep(int step, string status, Msg? message) => _state.Mutate(s =>
     {
         var entry = s.Steps.FirstOrDefault(x => x.Step == step);
         if (entry is null)

@@ -50,14 +50,12 @@ public sealed class Preflight
     private PreflightItem CheckObs()
     {
         if (_obs.Status.Connected)
-            return new PreflightItem { Key = "obs", Ok = true, Message = "OBS 已连接。" };
+            return Ok("obs", ("OBS 已连接。", "OBS is connected."));
 
-        return new PreflightItem
-        {
-            Key = "obs",
-            Ok = false,
-            Message = "OBS 没有连上。请确认 OBS Studio 已经打开；打开后本页会自动恢复，无需刷新。",
-        };
+        return Fail("obs", (
+            "OBS 没有连上。请确认 OBS Studio 已经打开；打开后本页会自动恢复，无需刷新。",
+            "OBS is not connected. Check that OBS Studio is open — this page recovers on its own, " +
+            "no need to refresh."));
     }
 
     private async Task<PreflightItem> CheckAudioAsync(CancellationToken ct)
@@ -65,15 +63,13 @@ public sealed class Preflight
         var name = _config.Settings.Obs.AudioInputName;
 
         if (string.IsNullOrWhiteSpace(name))
-            return new PreflightItem { Key = "audio", Ok = true, Message = "未配置音频输入名称，已跳过检查。" };
+            return Ok("audio", ("未配置音频输入名称，已跳过检查。",
+                "No audio input name configured; check skipped."));
 
         if (!_obs.Status.Connected)
-            return new PreflightItem
-            {
-                Key = "audio",
-                Ok = false,
-                Message = "无法检查声音，因为 OBS 没有连上。请先打开 OBS。",
-            };
+            return Fail("audio", (
+                "无法检查声音，因为 OBS 没有连上。请先打开 OBS。",
+                "Cannot check audio because OBS is not connected. Open OBS first."));
 
         IReadOnlyList<string> inputs;
         try
@@ -88,34 +84,30 @@ public sealed class Preflight
 
         var exists = inputs.Any(i => string.Equals(i, name, StringComparison.OrdinalIgnoreCase));
         if (!exists)
-            return new PreflightItem
-            {
-                Key = "audio",
-                Ok = false,
-                Message = $"OBS 里找不到名为「{name}」的声音设备。请检查调音台是否开机、USB 线是否插好；" +
-                          "若换过设备，请让管理员在设置页更新名称。",
-            };
+            return Fail("audio", (
+                $"OBS 里找不到名为「{name}」的声音设备。请检查调音台是否开机、USB 线是否插好；" +
+                "若换过设备，请让管理员在设置页更新名称。",
+                $"OBS has no audio device called \"{name}\". Check that the mixer is powered on and the " +
+                "USB cable is connected; if the device changed, ask the administrator to update the name " +
+                "on the settings page."));
 
         var peak = _obs.GetRecentAudioPeak(name, AudioWindow);
 
         if (peak is null)
-            return new PreflightItem
-            {
-                Key = "audio",
-                Ok = false,
-                Message = $"声音设备「{name}」存在，但读不到音量。请确认调音台已开机、USB 线已插好，" +
-                          "并让人在麦克风前说句话再看这里。",
-            };
+            return Fail("audio", (
+                $"声音设备「{name}」存在，但读不到音量。请确认调音台已开机、USB 线已插好，" +
+                "并让人在麦克风前说句话再看这里。",
+                $"Audio device \"{name}\" is there, but no level is coming through. Check that the mixer " +
+                "is on and the USB cable is connected, then have someone speak into a microphone and " +
+                "look again."));
 
         if (peak.Value < AudioActivityThreshold)
-            return new PreflightItem
-            {
-                Key = "audio",
-                Ok = false,
-                Message = $"声音设备「{name}」没有声音。请检查调音台是否开机、推子是否推起来、USB 线是否插好。",
-            };
+            return Fail("audio", (
+                $"声音设备「{name}」没有声音。请检查调音台是否开机、推子是否推起来、USB 线是否插好。",
+                $"Audio device \"{name}\" is silent. Check that the mixer is on, the faders are up, and " +
+                "the USB cable is connected."));
 
-        return new PreflightItem { Key = "audio", Ok = true, Message = $"声音正常（{name}）。" };
+        return Ok("audio", ($"声音正常（{name}）。", $"Audio is fine ({name})."));
     }
 
     /// <summary>
@@ -130,14 +122,19 @@ public sealed class Preflight
         {
             var unfinished = await _youtube.ListUnfinishedBroadcastsAsync(ct).ConfigureAwait(false);
             if (unfinished.Count == 0)
-                return new PreflightItem { Key = "previousBroadcast", Ok = true, Message = "没有未结束的直播。" };
+                return Ok("previousBroadcast", ("没有未结束的直播。", "No unfinished broadcasts."));
 
-            var titles = string.Join("、", unfinished.Select(b => $"「{b.Title}」"));
+            var zhTitles = string.Join("、", unfinished.Select(b => $"「{b.Title}」"));
+            var enTitles = string.Join(", ", unfinished.Select(b => $"\"{b.Title}\""));
+
             return new PreflightItem
             {
                 Key = "previousBroadcast",
                 Ok = false,
-                Message = $"上一场直播{titles}仍在进行，需要先结束它才能开始新的一场。是否现在结束？",
+                Message = new Msg(
+                    $"上一场直播{zhTitles}仍在进行，需要先结束它才能开始新的一场。是否现在结束？",
+                    $"An earlier broadcast ({enTitles}) is still running. It has to be ended before a new " +
+                    "one can start. End it now?"),
                 Action = "end-previous",
             };
         }
@@ -147,19 +144,20 @@ public sealed class Preflight
             {
                 Key = "previousBroadcast",
                 Ok = false,
-                Message = "还没有授权 YouTube 账号，无法检查上一场直播。请先完成授权。",
+                Message = new Msg(
+                    "还没有授权 YouTube 账号，无法检查上一场直播。请先完成授权。",
+                    "The YouTube account is not authorized yet, so earlier broadcasts cannot be checked. " +
+                    "Authorize first."),
                 Action = "reauthorize",
             };
         }
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Checking for unfinished broadcasts failed");
-            return new PreflightItem
-            {
-                Key = "previousBroadcast",
-                Ok = false,
-                Message = "暂时查不到 YouTube 上是否有未结束的直播，请检查网络后重试自检。",
-            };
+            return Fail("previousBroadcast", (
+                "暂时查不到 YouTube 上是否有未结束的直播，请检查网络后重试自检。",
+                "Cannot reach YouTube to check for unfinished broadcasts. Check the network, then run " +
+                "the checks again."));
         }
     }
 
@@ -174,7 +172,9 @@ public sealed class Preflight
                 {
                     Key = "auth",
                     Ok = false,
-                    Message = info.Message ?? "YouTube 授权已失效，需要重新授权。",
+                    Message = info.Message ?? new Msg(
+                        "YouTube 授权已失效，需要重新授权。",
+                        "YouTube authorization has expired and needs renewing."),
                     Action = "reauthorize",
                 };
 
@@ -184,12 +184,18 @@ public sealed class Preflight
                 {
                     Key = "auth",
                     Ok = false,
-                    Message = $"YouTube 授权还有 {info.ExpiresInDays} 天到期，请尽快请管理员重新授权。",
+                    Message = new Msg(
+                        $"YouTube 授权还有 {info.ExpiresInDays} 天到期，请尽快请管理员重新授权。",
+                        $"YouTube authorization expires in {info.ExpiresInDays} days. Ask the " +
+                        "administrator to renew it soon."),
                     Action = "reauthorize",
                 };
 
-            var suffix = info.ExpiresInDays is null ? "" : $"（剩余约 {info.ExpiresInDays} 天）";
-            return new PreflightItem { Key = "auth", Ok = true, Message = $"YouTube 授权有效{suffix}。" };
+            return Ok("auth", (
+                info.ExpiresInDays is null ? "YouTube 授权有效。" : $"YouTube 授权有效（剩余约 {info.ExpiresInDays} 天）。",
+                info.ExpiresInDays is null
+                    ? "YouTube authorization is valid."
+                    : $"YouTube authorization is valid (about {info.ExpiresInDays} days left)."));
         }
         catch (Exception ex)
         {
@@ -198,7 +204,9 @@ public sealed class Preflight
             {
                 Key = "auth",
                 Ok = false,
-                Message = "无法确认 YouTube 授权状态，请检查网络后重试自检。",
+                Message = new Msg(
+                    "无法确认 YouTube 授权状态，请检查网络后重试自检。",
+                    "Cannot confirm the YouTube authorization. Check the network, then run the checks again."),
                 Action = "reauthorize",
             };
         }
@@ -209,20 +217,14 @@ public sealed class Preflight
         var sources = _config.Settings.Obs.VideoSourceNames;
 
         if (sources.Count == 0)
-            return new PreflightItem
-            {
-                Key = "video",
-                Ok = true,
-                Message = "未配置画面来源名称，已跳过检查。可在设置页填写采集卡与电视采集源的名称。",
-            };
+            return Ok("video", (
+                "未配置画面来源名称，已跳过检查。可在设置页填写采集卡与电视采集源的名称。",
+                "No video source names configured; check skipped. They can be filled in on the settings page."));
 
         if (!_obs.Status.Connected)
-            return new PreflightItem
-            {
-                Key = "video",
-                Ok = false,
-                Message = "无法检查画面，因为 OBS 没有连上。请先打开 OBS。",
-            };
+            return Fail("video", (
+                "无法检查画面，因为 OBS 没有连上。请先打开 OBS。",
+                "Cannot check video because OBS is not connected. Open OBS first."));
 
         var dead = new List<string>();
         var unknown = new List<string>();
@@ -235,23 +237,24 @@ public sealed class Preflight
         }
 
         if (dead.Count > 0)
-            return new PreflightItem
-            {
-                Key = "video",
-                Ok = false,
-                Message = $"画面来源{string.Join("、", dead.Select(d => $"「{d}」"))}没有图像。" +
-                          "请检查摄像机是否开机、电视是否打开、采集卡的线是否插好。",
-            };
+            return Fail("video", (
+                $"画面来源{string.Join("、", dead.Select(d => $"「{d}」"))}没有图像。" +
+                "请检查摄像机是否开机、电视是否打开、采集卡的线是否插好。",
+                $"Video source{(dead.Count > 1 ? "s" : "")} {string.Join(", ", dead.Select(d => $"\"{d}\""))} " +
+                "showing no picture. Check that the camera is on, the TV is on, and the capture card " +
+                "cables are connected."));
 
         if (unknown.Count > 0)
-            return new PreflightItem
-            {
-                Key = "video",
-                Ok = false,
-                Message = $"在 OBS 里找不到画面来源{string.Join("、", unknown.Select(u => $"「{u}」"))}。" +
-                          "请让管理员在设置页核对名称。",
-            };
+            return Fail("video", (
+                $"在 OBS 里找不到画面来源{string.Join("、", unknown.Select(u => $"「{u}」"))}。" +
+                "请让管理员在设置页核对名称。",
+                $"OBS has no video source called {string.Join(", ", unknown.Select(u => $"\"{u}\""))}. " +
+                "Ask the administrator to check the names on the settings page."));
 
-        return new PreflightItem { Key = "video", Ok = true, Message = "画面正常。" };
+        return Ok("video", ("画面正常。", "Video is fine."));
     }
+
+    private static PreflightItem Ok(string key, Msg message) => new() { Key = key, Ok = true, Message = message };
+
+    private static PreflightItem Fail(string key, Msg message) => new() { Key = key, Ok = false, Message = message };
 }

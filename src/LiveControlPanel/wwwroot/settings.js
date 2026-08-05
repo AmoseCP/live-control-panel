@@ -1,11 +1,17 @@
 /*
  * Settings page (FR 6.5). Kept separate from the operator page so nothing here can be reached by
  * accident during a service, and gated behind the PIN.
+ *
+ * All visible text comes from i18n.js or from dual-language server messages via pick().
  */
 (function () {
   'use strict';
 
   var L = window.LCP;
+  var I = window.LCP_I18N;
+  var t = I.t;
+  var pick = I.pick;
+
   var settings = null;
 
   function value(id, v) {
@@ -15,11 +21,24 @@
     return element.value;
   }
 
+  /* ---- language ---------------------------------------------------------- */
+
+  I.apply();
+  L.on('btn-lang', function () { I.toggle(); });
+
+  // Everything built from data has to be rebuilt on a switch, not just the static labels.
+  window.LCP_onLanguageChange = function () {
+    if (!settings) return;
+    loadAccessInfo();
+    loadTemplates();
+    loadAuthStatus();
+  };
+
   /* ---- unlock ------------------------------------------------------------ */
 
   L.on('btn-unlock', function () {
     var pin = value('pin').trim();
-    if (!pin) { L.toast('请输入设置密码。', 'bad'); return; }
+    if (!pin) { L.toast(t('settings.pinEmpty'), 'bad'); return; }
 
     L.setSettingsPin(pin);
     L.api.get('/api/settings').then(function (result) {
@@ -29,13 +48,12 @@
         // An access-code failure must not discard a PIN that may well be correct, and must not tell
         // the operator to go find the PIN when the link is what is stale.
         if (reason === 'code') {
-          L.toast((result.data && result.data.message) ||
-            '访问码无效。请重新扫描二维码，或用管理员给的完整链接打开。', 'bad');
+          L.toast(pick(result.data && result.data.message) || t('generic.badAccessCode'), 'bad');
           return;
         }
 
         L.setSettingsPin('');
-        L.toast('设置密码不对。默认是 0000；改过的话见 settings.json。', 'bad');
+        L.toast(t('settings.pinWrong'), 'bad');
         return;
       }
       settings = result.data;
@@ -148,20 +166,20 @@
       info.addresses.forEach(function (address) {
         host.appendChild(addressRow(address.url, address.adapterName));
       });
-      if (info.mdnsUrl) host.appendChild(addressRow(info.mdnsUrl, 'mDNS 名称'));
-      host.appendChild(addressRow(info.localUrl, '本机（OBS 停靠面板用这个）'));
+      if (info.mdnsUrl) host.appendChild(addressRow(info.mdnsUrl, t('settings.accessMdns')));
+      host.appendChild(addressRow(info.localUrl, t('settings.accessLocal')));
 
       if (info.addresses.length === 0) {
         var warning = document.createElement('p');
         warning.className = 'subtle';
-        warning.textContent = '没有找到可用的局域网地址，请检查这台电脑是否连上了教会 WiFi。';
+        warning.textContent = t('settings.accessNone');
         host.appendChild(warning);
       }
 
       var qr = document.getElementById('qr-holder');
       qr.innerHTML = '';
       var image = document.createElement('img');
-      image.alt = '访问二维码';
+      image.alt = t('settings.qrAlt');
       image.src = 'data:image/png;base64,' + info.qrPngBase64;
       qr.appendChild(image);
     });
@@ -182,7 +200,7 @@
 
     var copy = document.createElement('button');
     copy.className = 'ghost';
-    copy.textContent = '复制这个地址';
+    copy.textContent = t('settings.copyAddress');
     copy.addEventListener('click', function () { L.copyText(url); });
     wrapper.appendChild(copy);
 
@@ -196,9 +214,9 @@
       var auth = result.data && result.data.auth;
       if (!auth) return;
 
-      L.text('auth-status', auth.valid
-        ? '授权有效' + (auth.expiresInDays != null ? '，剩余约 ' + auth.expiresInDays + ' 天' : '')
-        : '尚未授权或授权已失效。');
+      L.text('auth-status', !auth.valid ? t('settings.authNone')
+        : auth.expiresInDays != null ? t('settings.authOkDays', { n: auth.expiresInDays })
+        : t('settings.authOk'));
     });
   }
 
@@ -208,7 +226,7 @@
   });
 
   L.on('btn-revoke', function () {
-    if (!window.confirm('确定清除现有授权？清除后需要重新授权才能建播。')) return;
+    if (!window.confirm(t('settings.confirmRevoke'))) return;
     L.api.post('/api/auth/revoke').then(function (result) {
       report(result);
       loadAuthStatus();
@@ -218,7 +236,7 @@
   /* ---- stream key -------------------------------------------------------- */
 
   L.on('btn-create-key', function () {
-    if (!window.confirm('创建一个新的可复用推流密钥？创建后需要把密钥填进 OBS。')) return;
+    if (!window.confirm(t('settings.confirmKey'))) return;
 
     L.api.post('/api/stream-key/create').then(function (result) {
       var data = result.data || {};
@@ -261,7 +279,7 @@
       L.show('obs-inputs', true);
       element.textContent = Array.isArray(result.data)
         ? result.data.join('\n')
-        : (result.data && result.data.message) || '读取失败。';
+        : (result.data && pick(result.data.message)) || t('settings.readFailed');
     });
   });
 
@@ -269,26 +287,30 @@
   // an informed decision rather than a guess.
   L.on('btn-probe-com', function () {
     var out = document.getElementById('com-probe-out');
-    if (out) { L.show('com-probe-out', true); out.textContent = '检测中…'; }
+    if (out) { L.show('com-probe-out', true); out.textContent = t('settings.slidesProbing'); }
 
     L.api.get('/api/diag/slides').then(function (result) {
       var d = result.data || {};
       var lines = [
-        '会话: ' + d.sessionId + (d.sessionIsolated ? '（会话 0，翻页无法工作！）' : '（正常）'),
-        '自动化接口: ' + (d.comProgId || '未连上'),
-        '正在放映: ' + (d.slideShowRunning ? '是' : '否'),
-        '页码: ' + (d.current == null ? '读不到' : d.current + ' / ' + d.total),
-        '下一页预览: ' + (d.previewSupported ? '可用' : '不可用'),
-        '放映窗口(按键用): ' + (d.targetWindowFound ? '已找到' : '未找到 / 未配置类名'),
-        d.message ? '说明: ' + d.message : ''
+        t('settings.probeSession') + ': ' + d.sessionId +
+          '（' + t(d.sessionIsolated ? 'settings.probeSessionBad' : 'settings.probeSessionOk') + '）',
+        t('settings.probeCom') + ': ' + (d.comProgId || t('settings.probeComNone')),
+        t('settings.probePresenting') + ': ' + t(d.slideShowRunning ? 'settings.yes' : 'settings.no'),
+        t('settings.probePage') + ': ' + (d.current == null
+          ? t('settings.probePageNone') : d.current + ' / ' + d.total),
+        t('settings.probePreview') + ': ' +
+          t(d.previewSupported ? 'settings.probeAvailable' : 'settings.probeUnavailable'),
+        t('settings.probeWindow') + ': ' +
+          t(d.targetWindowFound ? 'settings.probeWindowFound' : 'settings.probeWindowNone'),
+        d.message ? t('settings.probeNote') + ': ' + pick(d.message) : ''
       ];
       return L.api.get('/api/diag/com-probe').then(function (probe) {
         var detail = (probe.data && probe.data.report) || '';
         if (out) out.textContent = lines.filter(Boolean).join('\n') +
-          (detail ? '\n\n逐步检测:\n' + detail.split(' | ').join('\n') : '');
+          (detail ? '\n\n' + t('settings.probeSteps') + ':\n' + detail.split(' | ').join('\n') : '');
       });
     }).catch(function () {
-      if (out) out.textContent = '检测失败。';
+      if (out) out.textContent = t('settings.slidesProbeFailed');
     });
   });
 
@@ -306,7 +328,7 @@
           button.textContent = w.className + (w.title ? '　—　' + w.title : '');
           button.addEventListener('click', function () {
             value('slides-class', w.className);
-            L.toast('已填入类名 ' + w.className + '，别忘了保存。', 'good');
+            L.toast(t('settings.slidesFilled', { name: w.className }), 'good');
           });
           host.appendChild(button);
         });
@@ -317,7 +339,7 @@
 
   function report(result) {
     var data = result.data || {};
-    var message = data.message || (result.ok ? '完成。' : '操作失败。');
+    var message = pick(data.message) || t(result.ok ? 'generic.done' : 'generic.failed');
     L.toast(message, data.ok === false || !result.ok ? 'bad' : 'good');
   }
 
@@ -330,7 +352,7 @@
       result.data.forEach(function (template) {
         var row = document.createElement('tr');
         var name = template.id === 'custom'
-          ? (template.name || '') + '（临时直播，不参与自动匹配）'
+          ? (template.name || '') + t('settings.adHocRow')
           : template.name;
         [name, (template.weekdays || []).join(','), template.startTime || '—']
           .forEach(function (cell) {

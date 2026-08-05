@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using LiveControlPanel.Core;
 
 namespace LiveControlPanel.Slides;
 
@@ -12,7 +13,7 @@ public sealed record ComReport(
     int? Current,
     int? Total,
     bool ExportSupported,
-    string? Error,
+    Msg? Error,
     string? Culture);
 
 /// <summary>
@@ -222,29 +223,35 @@ internal static class WpsCom
         {
             session = TryAttach();
             if (session is null)
-                return new ComReport(null, false, null, null, false,
-                    "没有找到正在放映的演示程序。逐个尝试的结果：" + AttachErrorSummary(), CultureTag());
+            {
+                var summary = AttachErrorSummary();
+                return new ComReport(null, false, null, null, false, new Msg(
+                    "没有找到正在放映的演示程序。逐个尝试的结果：" + summary.Zh,
+                    "No presenting program found. Results per ProgID: " + summary.En), CultureTag());
+            }
 
             var position = ReadPosition(session);
 
             var exported = false;
-            string? error = null;
+            Msg? error = null;
             try
             {
                 var target = position?.Current ?? 1;
                 exported = TryExportViaSession(session, target, probeFilePath, 320) is not null;
-                if (!exported) error = "已连上 COM，但导出幻灯片图像失败（该程序可能不支持 Slides.Export）。";
+                if (!exported) error = new Msg(
+                    "已连上 COM，但导出幻灯片图像失败（该程序可能不支持 Slides.Export）。",
+                    "Attached over COM, but rendering a slide failed (this program may not support Slides.Export).");
             }
             catch (Exception ex)
             {
-                error = "导出幻灯片图像时出错：" + ex.Message;
+                error = Msg.Same("导出幻灯片图像时出错 / slide export error: " + ex.Message);
             }
 
             return new ComReport(session.ProgId, true, position?.Current, position?.Total, exported, error, CultureTag());
         }
         catch (Exception ex)
         {
-            return new ComReport(null, false, null, null, false, ex.Message, CultureTag());
+            return new ComReport(null, false, null, null, false, Msg.Same(ex.Message), CultureTag());
         }
         finally
         {
@@ -258,7 +265,7 @@ internal static class WpsCom
     /// Why attaching failed, per ProgID. Kept because a silent null here is undiagnosable: the COM
     /// layer has many independent ways to be unavailable and they need different fixes.
     /// </summary>
-    private static readonly List<string> LastAttachErrors = new();
+    private static readonly List<Msg> LastAttachErrors = new();
 
     private static SlidePosition? ReadPosition(ComSession session)
     {
@@ -315,27 +322,27 @@ internal static class WpsCom
             try
             {
                 var hr = CLSIDFromProgID(progId, out var clsid);
-                if (hr != 0) { Note(progId, $"未注册 (CLSIDFromProgID 0x{hr:X8})"); continue; }
+                if (hr != 0) { Note(progId, new Msg($"未注册 (CLSIDFromProgID 0x{hr:X8})", $"not registered (CLSIDFromProgID 0x{hr:X8})")); continue; }
 
                 hr = GetActiveObject(ref clsid, IntPtr.Zero, out app);
-                if (hr != 0 || app is null) { Note(progId, $"未在运行 (GetActiveObject 0x{hr:X8})"); continue; }
+                if (hr != 0 || app is null) { Note(progId, new Msg($"未在运行 (GetActiveObject 0x{hr:X8})", $"not running (GetActiveObject 0x{hr:X8})")); continue; }
 
                 var windows = Get(app, "SlideShowWindows");
-                if (windows is null) { Note(progId, "读不到 SlideShowWindows"); continue; }
+                if (windows is null) { Note(progId, new Msg("读不到 SlideShowWindows", "cannot read SlideShowWindows")); continue; }
 
                 var count = Convert.ToInt32(Get(windows, "Count") ?? 0);
-                if (count < 1) { Note(progId, "已连上，但当前没有在放映"); continue; }
+                if (count < 1) { Note(progId, new Msg("已连上，但当前没有在放映", "attached, but nothing is presenting")); continue; }
 
                 var window = Invoke(windows, "Item", 1);
-                if (window is null) { Note(progId, "读不到 SlideShowWindows.Item(1)"); continue; }
+                if (window is null) { Note(progId, new Msg("读不到 SlideShowWindows.Item(1)", "cannot read SlideShowWindows.Item(1)")); continue; }
 
                 var view = Get(window, "View");
-                if (view is null) { Note(progId, "读不到 SlideShowWindow.View"); continue; }
+                if (view is null) { Note(progId, new Msg("读不到 SlideShowWindow.View", "cannot read SlideShowWindow.View")); continue; }
 
                 // Presentation hangs off the *window*, not the view. Reading it from the view fails
                 // with DISP_E_UNKNOWNNAME on PowerPoint 16 — measured, whatever the docs imply.
                 var presentation = Get(window, "Presentation");
-                if (presentation is null) { Note(progId, "读不到 SlideShowWindow.Presentation"); continue; }
+                if (presentation is null) { Note(progId, new Msg("读不到 SlideShowWindow.Presentation", "cannot read SlideShowWindow.Presentation")); continue; }
 
                 var session = new ComSession(progId, app, window, view, presentation);
                 app = null;   // ownership moved to the session
@@ -343,7 +350,7 @@ internal static class WpsCom
             }
             catch (Exception ex)
             {
-                Note(progId, ex.GetBaseException().Message);
+                Note(progId, Msg.Same(ex.GetBaseException().Message));
             }
             finally
             {
@@ -361,15 +368,21 @@ internal static class WpsCom
         return $"{c.Name} (LCID {c.LCID}), invariant={System.Globalization.CultureInfo.InvariantCulture.Equals(c)}";
     }
 
-    private static void Note(string progId, string reason)
-    {
-        lock (LastAttachErrors) LastAttachErrors.Add($"{progId}: {reason}");
-    }
-
-    private static string AttachErrorSummary()
+    private static void Note(string progId, Msg reason)
     {
         lock (LastAttachErrors)
-            return LastAttachErrors.Count == 0 ? "" : string.Join("；", LastAttachErrors);
+            LastAttachErrors.Add(new Msg($"{progId}: {reason.Zh}", $"{progId}: {reason.En}"));
+    }
+
+    private static Msg AttachErrorSummary()
+    {
+        lock (LastAttachErrors)
+        {
+            if (LastAttachErrors.Count == 0) return Msg.Empty;
+            return new Msg(
+                string.Join("；", LastAttachErrors.Select(e => e.Zh)),
+                string.Join("; ", LastAttachErrors.Select(e => e.En)));
+        }
     }
 
     private sealed class ComSession : IDisposable

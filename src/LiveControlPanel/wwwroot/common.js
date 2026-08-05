@@ -80,7 +80,8 @@
   function copyText(text) {
     if (global.navigator.clipboard && global.isSecureContext) {
       global.navigator.clipboard.writeText(text).then(function () {
-        toast('已复制链接。', 'good');
+        var i18n = global.LCP_I18N;
+        toast(i18n ? i18n.t('link.copied') : 'Copied.', 'good');
       }, function () {
         legacyCopy(text);
       });
@@ -108,7 +109,9 @@
     }
     document.body.removeChild(area);
 
-    toast(ok ? '已复制链接。' : '这台设备不允许自动复制，请长按上面的地址手动复制。', ok ? 'good' : 'bad');
+    var i18n = global.LCP_I18N;
+    toast(i18n ? i18n.t(ok ? 'link.copied' : 'link.copyFailed') : (ok ? 'Copied.' : 'Copy failed.'),
+      ok ? 'good' : 'bad');
   }
 
   /* ---- misc -------------------------------------------------------------- */

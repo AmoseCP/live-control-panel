@@ -66,8 +66,8 @@ public class SlideControlTests : IDisposable
         foreach (var result in new[] { controller.Next(), controller.Previous(), controller.Goto(3) })
         {
             Assert.False(result.Ok);
-            Assert.Contains("没有启用", result.Message);
-            Assert.Contains("设置页", result.Message);
+            Assert.Contains("没有启用", result.Message.Zh);
+            Assert.Contains("设置页", result.Message.Zh);
         }
     }
 
@@ -118,8 +118,8 @@ public class SlideControlTests : IDisposable
         var result = Controller(enabled: true).Next();
 
         Assert.False(result.Ok);
-        Assert.Contains("放映", result.Message);
-        Assert.DoesNotContain("没有启用", result.Message);
+        Assert.Contains("放映", result.Message.Zh);
+        Assert.DoesNotContain("没有启用", result.Message.Zh);
     }
 
     [Fact]
@@ -128,7 +128,7 @@ public class SlideControlTests : IDisposable
         var controller = Controller(enabled: true);
 
         Assert.False(controller.Goto(0).Ok);
-        Assert.Contains("大于 0", controller.Goto(0).Message);
+        Assert.Contains("大于 0", controller.Goto(0).Message.Zh);
         Assert.False(controller.Goto(-1).Ok);
     }
 

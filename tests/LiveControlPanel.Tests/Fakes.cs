@@ -156,7 +156,8 @@ public sealed class FakeTelegramClient : ITelegramClient
 {
     public List<string> Sent { get; } = new();
     public bool ShouldFail { get; set; }
-    public string FailureMessage { get; set; } = "发送失败：找不到该群。";
+    public LiveControlPanel.Core.Msg FailureMessage { get; set; } =
+        new("发送失败：找不到该群。", "Send failed: group not found.");
 
     public Task<TelegramResult> SendAsync(
         string botToken, string chatId, string text, CancellationToken ct = default)
@@ -164,6 +165,6 @@ public sealed class FakeTelegramClient : ITelegramClient
         if (ShouldFail) return Task.FromResult(new TelegramResult(false, FailureMessage));
 
         Sent.Add(text);
-        return Task.FromResult(new TelegramResult(true, "已发送。"));
+        return Task.FromResult(new TelegramResult(true, new LiveControlPanel.Core.Msg("已发送。", "Sent.")));
     }
 }
