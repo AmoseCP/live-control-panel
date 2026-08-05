@@ -269,6 +269,26 @@ public sealed class EndpointTests : IAsyncLifetime
         Assert.Equal(expected, state!.Today!.Title);
     }
 
+    /// <summary>
+    /// An ad-hoc stream is always "today, right now" — the date is the current date and the
+    /// scheduled start is the current moment, not midnight and not a template time.
+    /// </summary>
+    [Fact]
+    public async Task An_ad_hoc_stream_is_scheduled_for_this_moment_not_midnight()
+    {
+        var before = DateTime.Now;
+        await _client.PostAsJsonAsync($"/api/broadcast/create?k={_code}", new { templateId = "custom" });
+        var after = DateTime.Now;
+
+        var state = await _client.GetFromJsonAsync<RuntimeState>($"/api/state?k={_code}", Json.Options);
+        var scheduled = state!.Today!.ScheduledStart;
+
+        Assert.NotNull(scheduled);
+        Assert.InRange(scheduled!.Value, before.AddSeconds(-1), after.AddSeconds(1));
+        Assert.NotEqual(before.Date, scheduled.Value);   // not snapped to midnight
+        Assert.Equal(before.Date, scheduled.Value.Date); // but still today
+    }
+
     [Fact]
     public async Task An_ad_hoc_title_can_be_overridden()
     {
