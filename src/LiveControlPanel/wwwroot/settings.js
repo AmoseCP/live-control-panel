@@ -99,7 +99,7 @@
       },
       matchWindow: {
         beforeMinutes: parseInt(value('window-before'), 10) || 60,
-        afterMinutes: parseInt(value('window-after'), 10) || 90
+        afterMinutes: parseInt(value('window-after'), 10) || 120
       },
       youTube: {
         clientId: value('yt-client-id'),

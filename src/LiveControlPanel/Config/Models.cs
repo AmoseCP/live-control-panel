@@ -54,10 +54,20 @@ public sealed class SlidesSettings
     public string Strategy { get; set; } = "PostMessage";
 }
 
+/// <summary>
+/// How far from a service's nominal start time the panel still recognises it (FR 4.1).
+///
+/// The start times in the templates are the announced times, not what actually happens — an
+/// operator may arrive early or run late. The window is wider on the "after" side because running
+/// late is both more common and more stressful: a late operator must not be told "本日无排期".
+///
+/// -60/+120 stays unambiguous with the shipped schedule: Wednesday and Friday carry both an 04:40
+/// and an 18:00 service, and 04:40+120 = 06:40 never reaches 18:00-60 = 17:00.
+/// </summary>
 public sealed class MatchWindowSettings
 {
     public int BeforeMinutes { get; set; } = 60;
-    public int AfterMinutes { get; set; } = 90;
+    public int AfterMinutes { get; set; } = 120;
 }
 
 /// <summary>

@@ -9,6 +9,10 @@ public sealed record AuthInfo(bool Valid, int? ExpiresInDays, DateTime? Authoriz
 public sealed record CreateBroadcastRequest(
     string Title,
     string Description,
+    /// <summary>
+    /// What to report as YouTube's scheduledStartTime. This is the real start moment, not the
+    /// service's announced time — see the note in Orchestrator.CreateAsync.
+    /// </summary>
     DateTime ScheduledStart,
     string PrivacyStatus,
     bool MadeForKids,

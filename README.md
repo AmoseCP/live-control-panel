@@ -28,7 +28,7 @@
 
 ```bash
 # 需要 .NET 8 SDK
-dotnet test                                    # 210 个单元/接口测试
+dotnet test                                    # 224 个单元/接口测试
 dotnet run --project src/LiveControlPanel       # 默认 http://localhost:5088
 ```
 
@@ -112,7 +112,23 @@ tests/LiveControlPanel.Tests/
 | `youTube.assumedValidityDays` | 需求 8 要求显示「授权剩余有效期」，但 Google 对已发布应用的 refresh token 不公布有效期。默认 180 天（对应官方的闲置失效上限），是一个偏保守的倒计时 |
 | `obs.videoSourceNames` | 需求 4.4 的 `video` 自检项需要知道该检查哪些采集源 |
 
-### 3. 每周场次数：需求文档自身不一致
+### 3. 时间窗默认改为 −60 / +120，上报 YouTube 的时间改为实际时刻
+
+模板里的 `startTime` 是**对外公布的时间，不是实际发生的时间** —— 操作员会早到，也会迟到。据现场反馈，容错定为「早 1 小时、迟 2 小时」，因此 `matchWindow.afterMinutes` 默认从需求 3.2 的 `90` 改为 **`120`**（`beforeMinutes` 仍为 60）。
+
+| 场次 | 打开面板即为 Ready 的时段 |
+| --- | --- |
+| Morning Service 04:40 | 03:40 – 06:40 |
+| Wednesday / Friday 18:00 | 17:00 – 20:00 |
+| Sunday Service 10:30 | 09:30 – 12:30 |
+
+放宽后仍然**无歧义**：周三、周五一日两场，早场窗口 06:40 关闭，晚场窗口 17:00 才打开，中间不重叠。`Morning_and_evening_windows_never_overlap_on_a_two_service_day` 会把这两天逐分钟走一遍来守住这条性质。
+
+超出窗口（例如迟到 3 小时）仍按需求 6.1 落到「本日无排期 + 下一场时间 + 手动选择入口」，由操作员手动选择场次，不做额外猜测。
+
+相应地，`liveBroadcasts.insert` 的 `snippet.scheduledStartTime` 改为**实际按下开始的时刻**，而不是模板的名义时间。原因：`enableAutoStart=true`，整条编排从建播到 live 只有几十秒，18:25 才开播却告诉 YouTube「预定 18:00」，只会让观看页显示一个已经过去的时间。名义时间仍然用于场次匹配、标题生成，以及界面上的「预定开始 18:00」。
+
+### 4. 每周场次数：需求文档自身不一致
 
 需求 1 的正文写「每周七场」，但 3.1 的模板表（`weekdays` 是**必须**照抄的种子数据）实际是 **8 场**：
 
@@ -129,7 +145,7 @@ sunday-service    [0]         10:30  → 1
 
 > 这一处需要确认：是正文的「七场」笔误，还是排期表里某一场应当去掉。
 
-### 4. 端口 5088 在部分 Windows 上被系统占用
+### 5. 端口 5088 在部分 Windows 上被系统占用
 
 本机上 Hyper-V 保留了 4990–5089，绑定 5088 直接 `SocketException 10013`。默认值仍按需求保持 5088，但：
 
@@ -142,7 +158,7 @@ sunday-service    [0]         10:30  → 1
 
 ## 测试
 
-210 个测试，全部不接触真实的 YouTube / OBS / Telegram。
+224 个测试，全部不接触真实的 YouTube / OBS / Telegram。
 
 ```bash
 dotnet test
@@ -150,7 +166,7 @@ dotnet test
 
 | 测试文件 | 覆盖 |
 | --- | --- |
-| `ScheduleMatcherTests` | 开发计划 M1.3 的全部判据表 + 时间窗边界 + 标题不补零 |
+| `ScheduleMatcherTests` | 开发计划 M1.3 的全部判据表 + 时间窗边界 + 早到/迟到容错 + 一日两场窗口不重叠 + 标题不补零 |
 | `OrchestratorTests` | 幂等（连点 5 次 / 并发 5 次）、失败可从该步重试、停播、一日两场 |
 | `PreflightTests` | 五项自检的每条分支；自检失败**不阻断**开播 |
 | `NotificationTests` | Telegram 幂等、失败可重试、模板渲染 |

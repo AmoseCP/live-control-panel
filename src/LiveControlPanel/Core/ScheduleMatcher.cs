@@ -14,7 +14,7 @@ public static class ScheduleMatcher
     /// <summary>
     /// The service whose window contains <paramref name="now"/>, or null. When several windows
     /// overlap the nearest start wins; with the shipped 04:40/18:00 schedule and the default
-    /// -60/+90 window they never do, but the rule is required behaviour, not an accident of data.
+    /// -60/+120 window they never do, but the rule is required behaviour, not an accident of data.
     /// </summary>
     public static ServiceMatch? MatchToday(
         IEnumerable<ServiceTemplate> templates, DateTime now, MatchWindowSettings window)

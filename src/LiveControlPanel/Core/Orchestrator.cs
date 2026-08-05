@@ -156,7 +156,12 @@ public sealed class Orchestrator
         var info = await _youtube.CreateBroadcastAsync(new CreateBroadcastRequest(
             Title: today.Title!,
             Description: description,
-            ScheduledStart: today.ScheduledStart ?? DateTime.Now,
+            // The moment the operator actually pressed start, not the template's announced time.
+            // Operators run early or late, and with enableAutoStart the broadcast goes live within
+            // seconds of this call — so reporting the nominal 18:00 at 18:25 would just put a time
+            // that already passed on the watch page. The nominal time still drives matching, the
+            // title, and the "预定开始" line in the UI.
+            ScheduledStart: DateTime.Now,
             PrivacyStatus: Coalesce(template?.PrivacyStatus, "unlisted"),
             MadeForKids: template?.MadeForKids ?? false,
             LatencyPreference: Coalesce(template?.LatencyPreference, "ultraLow")), ct).ConfigureAwait(false);

@@ -64,8 +64,40 @@ public class OrchestratorTests
         Assert.Equal("unlisted", request.PrivacyStatus);
         Assert.False(request.MadeForKids);
         Assert.Equal("ultraLow", request.LatencyPreference);
-        Assert.Equal(new DateTime(2026, 8, 5, 18, 0, 0), request.ScheduledStart);
         Assert.Equal("God Bless You!", request.Description);
+    }
+
+    /// <summary>
+    /// Operators run early or late, so YouTube is told when the stream really started rather than the
+    /// service's announced time — otherwise the watch page advertises a time that already passed.
+    /// </summary>
+    [Fact]
+    public async Task Youtube_is_given_the_real_start_moment_not_the_announced_time()
+    {
+        using var host = new TestHost();
+        // Nominal start is 18:00 on 2026-08-05, which is neither now nor even this year.
+        host.SetToday();
+
+        var before = DateTime.Now;
+        await host.Orchestrator.StartTodayAsync();
+        var after = DateTime.Now;
+
+        var reported = host.YouTube.LastCreateRequest!.ScheduledStart;
+
+        Assert.InRange(reported, before.AddSeconds(-1), after.AddSeconds(1));
+        Assert.NotEqual(new DateTime(2026, 8, 5, 18, 0, 0), reported);
+    }
+
+    [Fact]
+    public async Task The_announced_time_is_still_what_the_panel_displays()
+    {
+        using var host = new TestHost();
+        host.SetToday();
+
+        await host.Orchestrator.StartTodayAsync();
+
+        // The operator sees "预定开始 18:00" regardless of when they actually pressed start.
+        Assert.Equal(new DateTime(2026, 8, 5, 18, 0, 0), host.State.Snapshot().Today!.ScheduledStart);
     }
 
     // ---------------------------------------------------------------- T-05 idempotency

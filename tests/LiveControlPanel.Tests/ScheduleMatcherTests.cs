@@ -13,7 +13,8 @@ public class ScheduleMatcherTests
     private static List<ServiceTemplate> Templates() =>
         Seed.Templates().Where(t => t.Weekdays.Count > 0 && t.StartTime is not null).ToList();
 
-    private static MatchWindowSettings Window() => new() { BeforeMinutes = 60, AfterMinutes = 90 };
+    /// <summary>The shipped defaults: an operator may arrive an hour early or run two hours late.</summary>
+    private static MatchWindowSettings Window() => new() { BeforeMinutes = 60, AfterMinutes = 120 };
 
     private static ServiceMatch? Match(DateTime now) =>
         ScheduleMatcher.MatchToday(Templates(), now, Window());
@@ -105,10 +106,85 @@ public class ScheduleMatcherTests
     }
 
     [Fact]
-    public void Window_closes_exactly_90_minutes_after_the_start()
+    public void Window_closes_exactly_120_minutes_after_the_start()
     {
-        Assert.NotNull(Match(new DateTime(2026, 8, 5, 6, 10, 0)));
-        Assert.Null(Match(new DateTime(2026, 8, 5, 6, 11, 0)));
+        Assert.NotNull(Match(new DateTime(2026, 8, 5, 6, 40, 0)));
+        Assert.Null(Match(new DateTime(2026, 8, 5, 6, 41, 0)));
+    }
+
+    // ---------------------------------------------------------------- early / late operators
+    //
+    // Template start times are announced times, not what happens. These assert the tolerance an
+    // operator actually gets.
+
+    [Theory]
+    [InlineData(3, 45, "morning-service")]   // 55 min early
+    [InlineData(4, 30, "morning-service")]   // 10 min early
+    [InlineData(4, 40, "morning-service")]   // on time
+    [InlineData(5, 30, "morning-service")]   // 50 min late
+    [InlineData(6, 30, "morning-service")]   // 110 min late — still recognised
+    public void An_early_or_late_morning_operator_still_lands_on_the_right_service(
+        int hour, int minute, string expectedId)
+    {
+        var match = Match(new DateTime(2026, 8, 5, hour, minute, 0));
+
+        Assert.NotNull(match);
+        Assert.Equal(expectedId, match!.Template.Id);
+    }
+
+    [Theory]
+    [InlineData(17, 5, "wednesday-service")]    // 55 min early
+    [InlineData(18, 0, "wednesday-service")]    // on time
+    [InlineData(19, 30, "wednesday-service")]   // 90 min late
+    [InlineData(19, 59, "wednesday-service")]   // 119 min late
+    public void An_early_or_late_evening_operator_still_lands_on_the_right_service(
+        int hour, int minute, string expectedId)
+    {
+        var match = Match(new DateTime(2026, 8, 5, hour, minute, 0));
+
+        Assert.NotNull(match);
+        Assert.Equal(expectedId, match!.Template.Id);
+    }
+
+    /// <summary>
+    /// The property that makes the wider window safe: on the two-service days the morning window
+    /// closes long before the evening window opens, so lateness never resolves to the wrong service.
+    /// </summary>
+    [Theory]
+    [InlineData(3)]   // Wednesday
+    [InlineData(5)]   // Friday
+    public void Morning_and_evening_windows_never_overlap_on_a_two_service_day(int weekday)
+    {
+        var date = new DateTime(2026, 8, 3).AddDays(weekday - 1);   // 8/3/2026 is a Monday
+        Assert.Equal(weekday, (int)date.DayOfWeek);
+
+        var window = Window();
+
+        // Walk the whole day a minute at a time; every minute matches at most one service, and the
+        // gap between them resolves to nothing rather than to a guess.
+        var morningLatest = date.AddHours(4).AddMinutes(40).AddMinutes(window.AfterMinutes);
+        var eveningEarliest = date.AddHours(18).AddMinutes(-window.BeforeMinutes);
+
+        Assert.True(morningLatest < eveningEarliest,
+            $"morning window closes {morningLatest:HH:mm} but evening opens {eveningEarliest:HH:mm}");
+
+        for (var minute = 0; minute < 24 * 60; minute++)
+        {
+            var now = date.AddMinutes(minute);
+            var match = ScheduleMatcher.MatchToday(Templates(), now, window);
+            if (match is null) continue;
+
+            var expected = now < date.AddHours(12) ? "morning-service" : null;
+            if (expected is not null) Assert.Equal(expected, match.Template.Id);
+            else Assert.Contains(match.Template.Id, new[] { "wednesday-service", "friday-prayer" });
+        }
+    }
+
+    [Fact]
+    public void Beyond_the_window_the_panel_reports_no_schedule_rather_than_guessing()
+    {
+        // Three hours late is outside the window by design; the operator uses the manual picker.
+        Assert.Null(Match(new DateTime(2026, 8, 5, 7, 40, 0)));
     }
 
     [Fact]
