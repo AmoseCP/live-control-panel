@@ -266,7 +266,7 @@ public static class Endpoints
                 : PinRequired());
 
         app.MapPut("/api/settings", (
-            AppSettings body, ConfigStore config, AccessGate gate, HttpContext context) =>
+            AppSettings body, ConfigStore config, AccessGate gate, HttpContext context, StateManager state) =>
         {
             if (!gate.IsValidPin(context)) return PinRequired();
 
@@ -292,6 +292,11 @@ public static class Endpoints
                 }
                 if (!string.IsNullOrWhiteSpace(body.SettingsPin)) current.SettingsPin = body.SettingsPin;
             });
+
+            // Push the effect immediately instead of waiting for the background poll. Ticking
+            // "enable slide control" and watching the operator page not change for five seconds
+            // reads as "the setting did not save".
+            state.RefreshSlides();
 
             return Results.Json(new ApiResult(true, "设置已保存。"), Json.Options);
         });

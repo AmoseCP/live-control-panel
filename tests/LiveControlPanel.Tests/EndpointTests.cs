@@ -477,6 +477,30 @@ public sealed class EndpointTests : IAsyncLifetime
         Assert.NotEqual(9999, _fixtures.Config.Settings.Port);
     }
 
+    /// <summary>
+    /// Saving settings pushes the new slide state at once. Waiting for the five-second background
+    /// poll made a saved setting look like it had not saved.
+    /// </summary>
+    [Fact]
+    public async Task Saving_settings_refreshes_slide_state_immediately()
+    {
+        _fixtures.Slides.State = new SlidesState { Enabled = true, Available = true, Current = 3, Total = 9 };
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/settings?k={_code}")
+        {
+            Content = JsonContent.Create(new { telegramChatId = "-100999" }),
+        };
+        request.Headers.Add(AccessGate.PinHeader, _pin);
+        Assert.True((await _client.SendAsync(request)).IsSuccessStatusCode);
+
+        // No background service runs in this host, so a fresh value here can only have come from the
+        // save path itself.
+        var state = await _client.GetFromJsonAsync<RuntimeState>($"/api/state?k={_code}", Json.Options);
+        Assert.True(state!.Slides.Enabled);
+        Assert.Equal(3, state.Slides.Current);
+        Assert.Equal(9, state.Slides.Total);
+    }
+
     [Fact]
     public async Task Templates_cannot_be_saved_empty_or_with_duplicate_ids()
     {
