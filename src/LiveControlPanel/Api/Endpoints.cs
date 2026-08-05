@@ -22,6 +22,17 @@ public sealed record CreateBroadcastBody(
 
 public sealed record ApiResult(bool Ok, string Message, int? FailedStep = null);
 
+/// <summary>
+/// A refused request, carrying *which* gate refused it. Both gates answer 403, and without this the
+/// page cannot tell "your access code is stale" from "your PIN is wrong" — so it guesses, and the
+/// guess sends the operator to fix the wrong thing.
+/// </summary>
+public sealed record GateResult(bool Ok, string Message, string Reason)
+{
+    public const string BadAccessCode = "code";
+    public const string PinRequired = "pin";
+}
+
 [SupportedOSPlatform("windows")]
 public static class Endpoints
 {
@@ -407,7 +418,9 @@ public static class Endpoints
         Results.Json(new ApiResult(outcome.Ok, outcome.Message, outcome.FailedStep), Json.Options);
 
     private static IResult PinRequired() =>
-        Results.Json(new ApiResult(false, "需要设置密码（PIN）。"), Json.Options, statusCode: 403);
+        Results.Json(
+            new GateResult(false, "设置密码（PIN）不对。", GateResult.PinRequired),
+            Json.Options, statusCode: 403);
 
     private static IResult Html(string body) => Results.Content("""
         <!doctype html>

@@ -51,3 +51,57 @@ public sealed class AccessGate
             System.Text.Encoding.UTF8.GetBytes(expected));
     }
 }
+
+public static class AccessGateMiddleware
+{
+    /// <summary>
+    /// Installs the gate. Lives here rather than in Program.cs so the tests exercise the real
+    /// middleware — a copy of these rules in the test host is how a 403 body drifted out of sync with
+    /// production once already.
+    /// </summary>
+    public static void UseAccessGate(this WebApplication app) => app.Use(async (context, next) =>
+    {
+        var path = context.Request.Path;
+
+        // Static files stay open so the page can load and stash the code. /auth/callback is open
+        // because Google's redirect cannot carry it.
+        var guarded = path.StartsWithSegments("/api")
+                      || path.StartsWithSegments("/ws")
+                      || path.StartsWithSegments("/auth/start");
+
+        if (guarded)
+        {
+            var gate = context.RequestServices.GetRequiredService<AccessGate>();
+            if (!gate.IsValidCode(context))
+            {
+                // Reason tags which gate refused. The PIN gate also answers 403, and the page must
+                // not tell someone their PIN is wrong when the real problem is a stale access code
+                // cached from a previous install.
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                await context.Response.WriteAsJsonAsync(new GateResult(
+                    false,
+                    "访问码无效。请重新扫描二维码，或用管理员给的完整链接打开。",
+                    GateResult.BadAccessCode));
+                return;
+            }
+
+            // Persist the code so a page opened from the QR keeps working after in-page navigation
+            // drops the query string.
+            if (context.Request.Query.ContainsKey(AccessGate.CodeQuery))
+            {
+                context.Response.Cookies.Append(
+                    AccessGate.CodeCookie,
+                    context.Request.Query[AccessGate.CodeQuery].ToString(),
+                    new CookieOptions
+                    {
+                        HttpOnly = false,
+                        IsEssential = true,
+                        SameSite = SameSiteMode.Lax,
+                        Expires = DateTimeOffset.UtcNow.AddYears(1),
+                    });
+            }
+        }
+
+        await next();
+    });
+}

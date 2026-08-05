@@ -28,7 +28,7 @@
 
 ```bash
 # 需要 .NET 8 SDK
-dotnet test                                    # 247 个单元/接口测试
+dotnet test                                    # 249 个单元/接口测试
 dotnet run --project src/LiveControlPanel       # 默认 http://localhost:5088
 ```
 
@@ -215,7 +215,7 @@ sunday-service    [0]         10:30  → 1
 
 ## 测试
 
-247 个测试，全部不接触真实的 YouTube / OBS / Telegram。
+249 个测试，全部不接触真实的 YouTube / OBS / Telegram。
 
 ```bash
 dotnet test
@@ -261,7 +261,7 @@ dotnet test
 
 ## 接口
 
-写操作一律校验访问码；设置类接口另需 `X-Settings-Pin`。
+写操作一律校验访问码；设置类接口另需 `X-Settings-Pin`。两道门都返回 403，响应体的 `reason` 区分是哪一道：`"code"` = 访问码无效，`"pin"` = 设置密码不对。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |

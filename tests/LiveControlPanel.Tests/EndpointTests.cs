@@ -63,30 +63,12 @@ public sealed class EndpointTests : IAsyncLifetime
 
         _app = builder.Build();
         _app.UseWebSockets();
-        UseAccessGate(_app);
+        _app.UseAccessGate();
         _app.MapPanelEndpoints();
 
         await _app.StartAsync();
         _client = _app.GetTestClient();
     }
-
-    /// <summary>Mirrors the gate in Program.cs so the tests exercise the same rules.</summary>
-    private static void UseAccessGate(WebApplication app) => app.Use(async (context, next) =>
-    {
-        var path = context.Request.Path;
-        var guarded = path.StartsWithSegments("/api")
-                      || path.StartsWithSegments("/ws")
-                      || path.StartsWithSegments("/auth/start");
-
-        if (guarded && !context.RequestServices.GetRequiredService<AccessGate>().IsValidCode(context))
-        {
-            context.Response.StatusCode = StatusCodes.Status403Forbidden;
-            await context.Response.WriteAsJsonAsync(new ApiResult(false, "访问码无效。"));
-            return;
-        }
-
-        await next();
-    });
 
     public async Task DisposeAsync()
     {
@@ -444,6 +426,40 @@ public sealed class EndpointTests : IAsyncLifetime
         request.Headers.Add(AccessGate.PinHeader, "0000000");
 
         Assert.Equal(HttpStatusCode.Forbidden, (await _client.SendAsync(request)).StatusCode);
+    }
+
+    /// <summary>
+    /// Both gates answer 403, so the body has to say which one refused. Without this the settings page
+    /// reported "wrong PIN" for a stale access code — sending the operator to fix the wrong thing, and
+    /// discarding a PIN that was actually correct.
+    /// </summary>
+    [Fact]
+    public async Task A_bad_access_code_and_a_bad_pin_are_distinguishable()
+    {
+        var badCode = await _client.GetAsync("/api/settings?k=definitely-wrong");
+        Assert.Equal(HttpStatusCode.Forbidden, badCode.StatusCode);
+        var codeBody = await badCode.Content.ReadFromJsonAsync<GateResult>();
+        Assert.Equal(GateResult.BadAccessCode, codeBody!.Reason);
+        Assert.Contains("访问码", codeBody.Message);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/settings?k={_code}");
+        request.Headers.Add(AccessGate.PinHeader, "999999");
+        var badPin = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Forbidden, badPin.StatusCode);
+        var pinBody = await badPin.Content.ReadFromJsonAsync<GateResult>();
+        Assert.Equal(GateResult.PinRequired, pinBody!.Reason);
+        Assert.Contains("密码", pinBody.Message);
+
+        Assert.NotEqual(codeBody.Reason, pinBody.Reason);
+    }
+
+    [Fact]
+    public async Task A_missing_pin_is_reported_as_a_pin_problem_not_an_access_problem()
+    {
+        var response = await _client.GetAsync($"/api/settings?k={_code}");
+
+        var body = await response.Content.ReadFromJsonAsync<GateResult>();
+        Assert.Equal(GateResult.PinRequired, body!.Reason);
     }
 
     [Fact]

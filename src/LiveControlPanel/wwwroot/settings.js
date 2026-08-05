@@ -24,8 +24,18 @@
     L.setSettingsPin(pin);
     L.api.get('/api/settings').then(function (result) {
       if (result.status === 403) {
+        var reason = (result.data && result.data.reason) || '';
+
+        // An access-code failure must not discard a PIN that may well be correct, and must not tell
+        // the operator to go find the PIN when the link is what is stale.
+        if (reason === 'code') {
+          L.toast((result.data && result.data.message) ||
+            '访问码无效。请重新扫描二维码，或用管理员给的完整链接打开。', 'bad');
+          return;
+        }
+
         L.setSettingsPin('');
-        L.toast('设置密码不对。', 'bad');
+        L.toast('设置密码不对。默认是 0000；改过的话见 settings.json。', 'bad');
         return;
       }
       settings = result.data;

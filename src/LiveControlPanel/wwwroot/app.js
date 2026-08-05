@@ -452,7 +452,8 @@
 
   L.api.get('/api/state').then(function (result) {
     if (result.status === 403) {
-      L.toast('访问码无效。请重新扫描二维码打开本页。', 'bad');
+      L.toast((result.data && result.data.message) ||
+        '访问码无效。请重新扫描二维码打开本页。', 'bad');
       return;
     }
     if (result.data) render(result.data);

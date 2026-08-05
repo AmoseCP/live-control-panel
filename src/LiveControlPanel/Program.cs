@@ -101,7 +101,7 @@ public static class Program
 
         app.UseWebSockets();
         UseStaticAssets(app);
-        UseAccessGate(app);
+        app.UseAccessGate();
 
         app.MapPanelEndpoints();
         MapWebSocket(app);
@@ -134,48 +134,6 @@ public static class Program
             // update would be diagnosed at 04:40 by someone with no way to fix it.
             OnPrepareResponse = ctx =>
                 ctx.Context.Response.Headers.CacheControl = "no-cache, no-store, must-revalidate",
-        });
-    }
-
-    private static void UseAccessGate(WebApplication app)
-    {
-        app.Use(async (context, next) =>
-        {
-            var path = context.Request.Path;
-
-            var guarded = path.StartsWithSegments("/api")
-                          || path.StartsWithSegments("/ws")
-                          || path.StartsWithSegments("/auth/start");
-
-            if (guarded)
-            {
-                var gate = context.RequestServices.GetRequiredService<AccessGate>();
-                if (!gate.IsValidCode(context))
-                {
-                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
-                    await context.Response.WriteAsJsonAsync(
-                        new ApiResult(false, "访问码无效。请重新扫描二维码或使用管理员给的链接打开。"));
-                    return;
-                }
-
-                // Persist the code so a page opened from the QR keeps working after in-page
-                // navigation drops the query string.
-                if (context.Request.Query.ContainsKey(AccessGate.CodeQuery))
-                {
-                    context.Response.Cookies.Append(
-                        AccessGate.CodeCookie,
-                        context.Request.Query[AccessGate.CodeQuery].ToString(),
-                        new CookieOptions
-                        {
-                            HttpOnly = false,
-                            IsEssential = true,
-                            SameSite = SameSiteMode.Lax,
-                            Expires = DateTimeOffset.UtcNow.AddYears(1),
-                        });
-                }
-            }
-
-            await next();
         });
     }
 
