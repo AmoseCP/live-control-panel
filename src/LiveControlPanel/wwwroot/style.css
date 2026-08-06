@@ -66,6 +66,29 @@ h2 { font-size: 1rem; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
   margin-bottom: 12px;
 }
 
+/*
+ * The current phase card carries a colored edge, so the panel's state is readable from across a
+ * room before any text is: blue = ready to start, red = on air, green = finished. Static color
+ * only — FR 2.2 rules out animation.
+ */
+#phase-ready { border-left: 4px solid var(--accent); }
+#phase-live { border-left: 4px solid var(--bad); }
+#phase-ended { border-left: 4px solid var(--ok); }
+
+/* A static "on air" pill next to the Live heading. */
+.onair {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--bad);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  vertical-align: 2px;
+}
+
 .title-big { font-size: 1.5rem; font-weight: 700; margin: 2px 0 4px; }
 .subtle { color: var(--muted); font-size: 0.875rem; }
 .hidden { display: none !important; }
@@ -121,28 +144,79 @@ button.ghost { background: transparent; min-height: 48px; font-weight: 500; colo
 
 /* ---- status ---- */
 
-.metrics { display: flex; flex-wrap: wrap; gap: 8px 18px; }
-.metric { font-variant-numeric: tabular-nums; }
-.metric span { color: var(--muted); font-size: 0.8125rem; display: block; }
+/*
+ * Live metrics as stat tiles: big semibold value, small muted label underneath, tabular numerals so
+ * the elapsed-time digits do not jitter as each WebSocket push updates them in place.
+ */
+.metrics { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+
+.metric {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: 1.3rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metric .lbl {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  display: block;
+  margin-top: 2px;
+}
+
+/* Dropped frames escalate by threshold. The label sits right under the value, so state is never
+   carried by color alone. */
+.metric.warn { color: var(--warn); }
+.metric.crit { color: var(--bad); }
+
+@media (min-width: 560px) {
+  .metrics { grid-template-columns: repeat(4, 1fr); }
+}
 
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
 .dot.ok { background: var(--ok); }
 .dot.bad { background: var(--bad); }
 
-.check { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.check { display: flex; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); align-items: flex-start; }
 .check:first-child { border-top: 0; }
-.check .mark { flex: 0 0 20px; font-weight: 700; }
-.check.ok .mark { color: var(--ok); }
-.check.bad .mark { color: var(--warn); }
+
+/* Icon chips: a tinted circle reads faster down a list than a bare glyph. */
+.check .mark {
+  flex: 0 0 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.check.ok .mark { background: rgba(47, 158, 95, 0.16); color: var(--ok); }
+.check.bad .mark { background: rgba(201, 138, 26, 0.18); color: var(--warn); }
 .check .body { flex: 1; }
 .check button { margin-top: 8px; min-height: 48px; }
 
 .steps { list-style: none; margin: 0; padding: 0; }
-.steps li { display: flex; gap: 10px; padding: 6px 0; font-size: 0.9375rem; }
+.steps li { display: flex; gap: 10px; padding: 6px 8px; font-size: 0.9375rem; border-radius: 8px; }
 .steps .mark { flex: 0 0 20px; }
 .steps li.done .mark, .steps li.skipped .mark { color: var(--ok); }
 .steps li.failed .mark { color: var(--bad); }
 .steps li.pending { color: var(--muted); }
+
+/* The failed step is the one line the operator must find; give it a quiet highlight. */
+.steps li.failed { background: rgba(207, 68, 68, 0.10); }
+.steps li.running { font-weight: 600; }
+
+/* Picker rows: service name left, start time right, so the times line up as a column. */
+#template-list button { display: flex; justify-content: space-between; align-items: center; }
+#template-list button .time { color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 500; }
 
 /* ---- link box: doubles as the manual-copy fallback on http origins ---- */
 

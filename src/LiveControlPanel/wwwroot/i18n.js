@@ -51,6 +51,7 @@
 
     /* ---- phase: Live ---- */
     'live.heading': ['正在直播', 'On air'],
+    'live.onair': ['● 直播中', '● ON AIR'],
     'live.elapsed': ['已直播', 'Elapsed'],
     'live.bitrate': ['码率', 'Bitrate'],
     'live.dropped': ['丢帧', 'Dropped'],

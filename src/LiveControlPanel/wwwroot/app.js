@@ -189,10 +189,19 @@
   }
 
   function renderMetrics() {
-    L.text('m-time', L.duration(state.obs.streamTimeSeconds));
-    L.text('m-bitrate', state.obs.kbitsPerSec ? state.obs.kbitsPerSec + ' kb/s' : '—');
-    L.text('m-dropped', (state.obs.droppedFramesPercent || 0).toFixed(1) + '%');
-    L.text('m-scene', state.obs.currentScene || '—');
+    L.text('m-time-v', L.duration(state.obs.streamTimeSeconds));
+    L.text('m-bitrate-v', state.obs.kbitsPerSec ? state.obs.kbitsPerSec + ' kb/s' : '—');
+
+    // Dropped frames escalate visually: over 1% is worth a glance, over 5% the stream is suffering.
+    // The label sits under the value, so the state is never carried by color alone.
+    var dropped = state.obs.droppedFramesPercent || 0;
+    var tile = document.getElementById('m-dropped');
+    if (tile) {
+      tile.classList.toggle('crit', dropped >= 5);
+      tile.classList.toggle('warn', dropped >= 1 && dropped < 5);
+    }
+    L.text('m-dropped-v', dropped.toFixed(1) + '%');
+    L.text('m-scene-v', state.obs.currentScene || '—');
   }
 
   function renderPreflight() {
@@ -381,9 +390,11 @@
 
     // FR 8: seven people share this PC, so "who did what, when" has to be on screen.
     if (state.lastAction) {
+      var service = state.lastAction.service
+        ? (I.lang === 'en' ? ' (' + state.lastAction.service + ')' : '（' + state.lastAction.service + '）')
+        : '';
       L.text('last-action', t('status.lastAction') + L.clockTime(state.lastAction.at) + ' ' +
-        pick(state.lastAction.what) +
-        (state.lastAction.service ? '（' + state.lastAction.service + '）' : ''));
+        pick(state.lastAction.what) + service);
     }
   }
 
@@ -515,7 +526,15 @@
         }
 
         var button = document.createElement('button');
-        button.textContent = template.name + (template.startTime ? '　' + template.startTime : '');
+        var name = document.createElement('span');
+        name.textContent = template.name;
+        button.appendChild(name);
+        if (template.startTime) {
+          var time = document.createElement('span');
+          time.className = 'time';
+          time.textContent = template.startTime;
+          button.appendChild(time);
+        }
         button.addEventListener('click', function () {
           L.api.post('/api/broadcast/create', { templateId: template.id }).then(function (created) {
             report(created);

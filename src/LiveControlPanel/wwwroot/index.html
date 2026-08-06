@@ -73,13 +73,15 @@
 
 <!-- phase: Live -->
 <section id="phase-live" class="card hidden">
-  <h2 data-i18n="live.heading">正在直播</h2>
+  <h2><span data-i18n="live.heading">正在直播</span><span class="onair" data-i18n="live.onair">● 直播中</span></h2>
   <p class="title-big" id="live-title">—</p>
+  <!-- Value and label are separate elements: writing the value via textContent on the tile
+       itself would wipe the label span along with it. -->
   <div class="metrics" style="margin:10px 0 14px">
-    <div class="metric" id="m-time">—<span data-i18n="live.elapsed">已直播</span></div>
-    <div class="metric" id="m-bitrate">—<span data-i18n="live.bitrate">码率</span></div>
-    <div class="metric" id="m-dropped">—<span data-i18n="live.dropped">丢帧</span></div>
-    <div class="metric" id="m-scene">—<span data-i18n="live.scene">当前画面</span></div>
+    <div class="metric" id="m-time"><span id="m-time-v">—</span><span class="lbl" data-i18n="live.elapsed">已直播</span></div>
+    <div class="metric" id="m-bitrate"><span id="m-bitrate-v">—</span><span class="lbl" data-i18n="live.bitrate">码率</span></div>
+    <div class="metric" id="m-dropped"><span id="m-dropped-v">—</span><span class="lbl" data-i18n="live.dropped">丢帧</span></div>
+    <div class="metric" id="m-scene"><span id="m-scene-v">—</span><span class="lbl" data-i18n="live.scene">当前画面</span></div>
   </div>
   <div class="stack">
     <button id="btn-telegram" data-i18n="live.sendTelegram">发送链接到 Telegram</button>

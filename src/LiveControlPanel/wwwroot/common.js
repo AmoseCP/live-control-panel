@@ -73,7 +73,14 @@
     element.textContent = message;
     element.className = kind || '';
     if (toastTimer) global.clearTimeout(toastTimer);
-    toastTimer = global.setTimeout(function () { element.className = 'hidden'; }, 6000);
+
+    // Errors carry instructions the operator has to act on, and several past misdiagnoses came down
+    // to an explanation that vanished before it was read. Keep failures up three times longer.
+    toastTimer = global.setTimeout(function () { element.className = 'hidden'; },
+      kind === 'bad' ? 18000 : 6000);
+
+    // Any toast can also be dismissed by tapping it.
+    element.onclick = function () { element.className = 'hidden'; };
   }
 
   /* ---- copy -------------------------------------------------------------
