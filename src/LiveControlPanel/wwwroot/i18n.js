@@ -133,6 +133,9 @@
     'settings.pinWrong': ['设置密码不对。默认是 0000；改过的话见 settings.json。',
       'Wrong settings password. The default is 0000; if changed, see settings.json.'],
     'settings.pinEmpty': ['请输入设置密码。', 'Enter the settings password.'],
+    'settings.loadFailed': ['连接不上面板，可能正在重启。请稍等几秒再试。',
+      'Cannot reach the panel — it may be restarting. Wait a few seconds and try again.'],
+    'settings.retryLoad': ['重新加载', 'Reload'],
 
     'settings.accessHeading': ['访问地址与二维码', 'Access addresses and QR code'],
     'settings.accessHint': ['让操作员用 iPad 扫这个码，然后「添加到主屏幕」。',

@@ -56,6 +56,15 @@
         L.toast(t('settings.pinWrong'), 'bad');
         return;
       }
+
+      // A network failure resolves as {status: 0, data: null} rather than rejecting. Treating that
+      // as success "unlocked" into an empty shell — every card visible, nothing in any of them, no
+      // message — which happens exactly when the panel is restarting. Stay on the PIN card instead.
+      if (!result.ok || !result.data) {
+        L.toast(t('settings.loadFailed'), 'bad');
+        return;
+      }
+
       settings = result.data;
       L.show('pin-card', false);
       L.show('settings-body', true);
@@ -184,10 +193,26 @@
 
   function loadAccessInfo() {
     L.api.get('/api/access-info').then(function (result) {
-      var info = result.data;
-      if (!info) return;
-
       var host = document.getElementById('access-addresses');
+      if (!host) return;
+
+      var info = result.data;
+      if (!info) {
+        // A silent return here left the card permanently empty after a transient failure.
+        host.innerHTML = '';
+        var warning = document.createElement('p');
+        warning.className = 'subtle';
+        warning.textContent = t('settings.loadFailed');
+        host.appendChild(warning);
+
+        var retry = document.createElement('button');
+        retry.className = 'ghost';
+        retry.textContent = t('settings.retryLoad');
+        retry.addEventListener('click', loadAccessInfo);
+        host.appendChild(retry);
+        return;
+      }
+
       host.innerHTML = '';
 
       info.addresses.forEach(function (address) {
