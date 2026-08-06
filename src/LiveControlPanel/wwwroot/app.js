@@ -548,15 +548,30 @@
   I.apply();
 
   if (!L.code) {
-    L.toast(t('generic.noAccessCode'), 'bad');
+    showAccessError(t('generic.noAccessCode'));
   }
 
   L.api.get('/api/state').then(function (result) {
     if (result.status === 403) {
-      L.toast(pick(result.data && result.data.message) || t('generic.badAccessCode'), 'bad');
+      showAccessError(pick(result.data && result.data.message) || t('generic.badAccessCode'));
       return;
     }
     if (result.data) render(result.data);
     connect();
   });
+
+  /*
+   * A refused access code has to stop the page, not decorate it. Leaving the shell up shows an
+   * operator a panel full of "—" placeholders with no working buttons, and the toast explaining why
+   * disappears after six seconds. The conclusion they reach is "the panel is broken" and the fix
+   * they need — get a fresh link — is nowhere on screen.
+   */
+  function showAccessError(message) {
+    L.text('access-error-message', message);
+    L.show('access-error', true);
+
+    ['phase-noschedule', 'phase-ready', 'phase-live', 'phase-ended', 'progress-card',
+      'preflight-card', 'scene-card', 'slides-card', 'link-card', 'picker-card', 'status-card',
+      'offline'].forEach(function (id) { L.show(id, false); });
+  }
 })();

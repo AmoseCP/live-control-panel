@@ -19,6 +19,19 @@
   <button id="btn-lang" class="lang">English</button>
 </div>
 
+<!--
+  Shown instead of the panel when the access code is refused. It has to be persistent and it has to
+  replace the content: a transient toast over an empty shell full of "—" placeholders reads as
+  "the panel is broken", which is the wrong conclusion and the wrong fix. A stale home-screen icon
+  on an iPad produces exactly this.
+-->
+<section id="access-error" class="card hidden">
+  <h2 data-i18n="access.heading">打不开面板</h2>
+  <p id="access-error-message"></p>
+  <p class="subtle" style="margin-bottom:0" data-i18n="access.hint">
+    访问码会在管理员重装面板后变化。请让管理员重新给你二维码或链接。</p>
+</section>
+
 <!-- phase: NoSchedule -->
 <section id="phase-noschedule" class="card hidden">
   <h2 id="noschedule-heading" data-i18n="noschedule.heading">本日无排期</h2>
@@ -116,7 +129,7 @@
   <button class="ghost" id="btn-picker-cancel" data-i18n="picker.cancel">取消</button>
 </section>
 
-<section class="card">
+<section class="card" id="status-card">
   <h2 data-i18n="status.heading">状态</h2>
   <p class="subtle" style="margin:0"><span class="dot" id="dot-obs"></span><span id="obs-text">OBS —</span></p>
   <p class="subtle" style="margin:6px 0 0"><span class="dot" id="dot-auth"></span><span id="auth-text">—</span></p>

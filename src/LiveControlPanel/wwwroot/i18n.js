@@ -103,6 +103,11 @@
     'status.recheck': ['重新自检', 'Run checks again'],
     'status.settings': ['设置 →', 'Settings →'],
 
+    /* ---- access refused ---- */
+    'access.heading': ['打不开面板', 'Cannot open the panel'],
+    'access.hint': ['访问码会在管理员重装面板后变化。请让管理员重新给你二维码或链接。',
+      'The access code changes if the administrator reinstalls the panel. Ask them for a fresh QR code or link.'],
+
     /* ---- generic ---- */
     'generic.done': ['完成。', 'Done.'],
     'generic.failed': ['操作失败，请重试。', 'Something went wrong. Please retry.'],
