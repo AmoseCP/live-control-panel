@@ -48,7 +48,7 @@
         // An access-code failure must not discard a PIN that may well be correct, and must not tell
         // the operator to go find the PIN when the link is what is stale.
         if (reason === 'code') {
-          L.toast(pick(result.data && result.data.message) || t('generic.badAccessCode'), 'bad');
+          showAccessError(pick(result.data && result.data.message) || t('generic.badAccessCode'));
           return;
         }
 
@@ -68,6 +68,27 @@
 
   L.on('btn-back', function () {
     location.href = 'index.html?k=' + encodeURIComponent(L.code);
+  });
+
+  /*
+   * Replaces the PIN box rather than sitting behind it. A stale link makes the PIN unusable, so
+   * leaving the box on screen invites the operator to blame the PIN — which is what happened.
+   */
+  function showAccessError(message) {
+    L.text('access-error-message', message);
+    L.show('access-error', true);
+    L.show('pin-card', false);
+    L.show('settings-body', false);
+  }
+
+  /*
+   * Check the access code before asking for a PIN. /api/state needs only the code, so a stale link is
+   * caught on arrival instead of after the operator has typed a PIN that could never have worked.
+   */
+  L.api.get('/api/state').then(function (result) {
+    if (result.status === 403 && (result.data && result.data.reason) === 'code') {
+      showAccessError(pick(result.data.message) || t('generic.badAccessCode'));
+    }
   });
 
   /* ---- fill / save ------------------------------------------------------- */

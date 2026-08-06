@@ -18,6 +18,18 @@
 </div>
 <button class="ghost" id="btn-back" data-i18n="settings.back">← 返回控制面板</button>
 
+<!--
+  A refused access code is not a PIN problem, and must not be presented as one. Leaving the PIN box up
+  invites the operator to keep typing a code that cannot work, while the only explanation disappears
+  after six seconds — which is exactly how "the PIN does not unlock" gets reported.
+-->
+<section id="access-error" class="card hidden">
+  <h2 data-i18n="access.headingSettings">打不开设置页</h2>
+  <p id="access-error-message"></p>
+  <p class="subtle" style="margin-bottom:0" data-i18n="access.hint">
+    访问码会在管理员重装面板后变化。请让管理员重新给你二维码或链接。</p>
+</section>
+
 <!-- PIN gate: guards against mis-edits by seven people sharing one PC, not against attackers -->
 <section id="pin-card" class="card">
   <h2 data-i18n="settings.pinHeading">请输入设置密码</h2>

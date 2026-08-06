@@ -105,6 +105,7 @@
 
     /* ---- access refused ---- */
     'access.heading': ['打不开面板', 'Cannot open the panel'],
+    'access.headingSettings': ['打不开设置页', 'Cannot open the settings page'],
     'access.hint': ['访问码会在管理员重装面板后变化。请让管理员重新给你二维码或链接。',
       'The access code changes if the administrator reinstalls the panel. Ask them for a fresh QR code or link.'],
 
