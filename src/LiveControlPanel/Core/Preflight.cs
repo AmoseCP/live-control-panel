@@ -47,15 +47,43 @@ public sealed class Preflight
         return items;
     }
 
+    /// <summary>
+    /// "OBS is not connected" on its own sends an operator to check the one thing that is usually
+    /// already right. Opening OBS is not enough: obs-websocket ships disabled, so a running OBS with
+    /// the server switched off looks exactly like a closed one. Name the actual fix per cause.
+    /// </summary>
     private PreflightItem CheckObs()
     {
         if (_obs.Status.Connected)
             return Ok("obs", ("OBS 已连接。", "OBS is connected."));
 
-        return Fail("obs", (
-            "OBS 没有连上。请确认 OBS Studio 已经打开；打开后本页会自动恢复，无需刷新。",
-            "OBS is not connected. Check that OBS Studio is open — this page recovers on its own, " +
-            "no need to refresh."));
+        return _obs.Problem switch
+        {
+            ObsProblem.NotListening => Fail("obs", (
+                "连不上 OBS。如果 OBS 已经打开，请在 OBS 里点 工具 → WebSocket 服务器设置 → " +
+                "勾选「启用 WebSocket 服务器」（这一项默认是关的）。若 OBS 没开，打开即可 —— " +
+                "本页会自动恢复，无需刷新。",
+                "Cannot reach OBS. If OBS is already open, go to Tools → WebSocket Server Settings in " +
+                "OBS and tick \"Enable WebSocket server\" — it is off by default. If OBS is closed, just " +
+                "open it; this page recovers on its own, no need to refresh.")),
+
+            ObsProblem.AuthenticationFailed => Fail("obs", (
+                "OBS 拒绝了密码。请在 OBS 里点 工具 → WebSocket 服务器设置 → 显示连接信息，" +
+                "把密码复制到本面板设置页的「WebSocket 密码」。",
+                "OBS rejected the password. In OBS, go to Tools → WebSocket Server Settings → Show " +
+                "Connect Info and copy the password into \"WebSocket password\" on the settings page.")),
+
+            ObsProblem.BadUrl => Fail("obs", (
+                $"OBS 连接地址填错了（{_config.Settings.Obs.Url}）。请在设置页改回 ws://localhost:4455。",
+                $"The OBS address is not valid ({_config.Settings.Obs.Url}). Set it back to " +
+                "ws://localhost:4455 on the settings page.")),
+
+            _ => Fail("obs", (
+                "OBS 没有连上。请确认 OBS Studio 已经打开，且 工具 → WebSocket 服务器设置 里已启用服务器；" +
+                "打开后本页会自动恢复，无需刷新。",
+                "OBS is not connected. Check that OBS Studio is open and that its WebSocket server is " +
+                "enabled under Tools → WebSocket Server Settings; this page recovers on its own.")),
+        };
     }
 
     private async Task<PreflightItem> CheckAudioAsync(CancellationToken ct)

@@ -109,6 +109,11 @@ public sealed class FakeObsClient : IObsClient
     public ObsStatus Status => new(Connected, Streaming, Streaming ? 120 : 0, CurrentScene, 0, Streaming ? 5000 : 0,
         AvailableScenes);
 
+    /// <summary>Lets a test choose which OBS misconfiguration the pre-flight should describe.</summary>
+    public ObsProblem ProblemToReport { get; set; } = ObsProblem.NotListening;
+
+    public ObsProblem Problem => Connected ? ObsProblem.None : ProblemToReport;
+
     public Task SetSceneAsync(string sceneName, CancellationToken ct = default)
     {
         Throw(nameof(SetSceneAsync));

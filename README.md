@@ -28,7 +28,7 @@
 
 ```bash
 # 需要 .NET 8 SDK
-dotnet test                                    # 282 个单元/接口测试
+dotnet test                                    # 287 个单元/接口测试
 dotnet run --project src/LiveControlPanel       # 默认 http://localhost:5088
 ```
 
@@ -237,7 +237,7 @@ sunday-service    [0]         10:30  → 1
 
 ## 测试
 
-282 个测试，全部不接触真实的 YouTube / OBS / Telegram。
+287 个测试，全部不接触真实的 YouTube / OBS / Telegram。
 
 ```bash
 dotnet test
@@ -247,7 +247,7 @@ dotnet test
 | --- | --- |
 | `ScheduleMatcherTests` | 开发计划 M1.3 的全部判据表 + 时间窗边界 + 早到/迟到容错 + 一日两场窗口不重叠 + 标题不补零 |
 | `OrchestratorTests` | 幂等（连点 5 次 / 并发 5 次）、失败可从该步重试、停播、一日两场 |
-| `PreflightTests` | 五项自检的每条分支；自检失败**不阻断**开播 |
+| `PreflightTests` | 五项自检的每条分支；OBS 三种失败原因各给对应处置；自检失败**不阻断**开播 |
 | `NotificationTests` | Telegram 幂等、失败可重试、模板渲染 |
 | `ConfigStoreTests` | 种子数据、删目录后重建、损坏文件降级、访问码生成 |
 | `StateManagerTests` | 四相位状态机、快照深拷贝、并发安全 |
@@ -352,7 +352,7 @@ dotnet test
 | --- | --- |
 | 面板打不开 | 确认服务在跑；检查防火墙；用 `?k=` 带访问码的完整地址 |
 | 启动即退出，日志说端口 | 端口被占用或被 Windows 保留，改 `settings.json` 的 `port` |
-| OBS 未连接 | 打开 OBS 即可，面板会自动重连，不必重启服务 |
+| OBS 未连接 | **打开 OBS 不等于开了 WebSocket 服务器** —— obs-websocket 默认是关的。在 OBS 里点 工具 → WebSocket 服务器设置 → 勾选「启用 WebSocket 服务器」，并把密码填进设置页。自检会按实际原因给出对应提示，日志也会写明 |
 | 授权失效 | 设置页「重新授权」；面板会在剩余 14 天内主动预警 |
 | 上一场未结束 | 自检会提示并提供一键结束 |
 | 忘记访问码 / PIN | 看 `%ProgramData%\LiveControlPanel\settings.json` |

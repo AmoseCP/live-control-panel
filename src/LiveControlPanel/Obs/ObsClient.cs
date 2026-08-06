@@ -41,6 +41,12 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
 
     private volatile ObsStatus _status = new(false, false, 0, null, 0, 0, Array.Empty<string>());
 
+    /// <summary>Last diagnosed reason for being disconnected. Read by the pre-flight.</summary>
+    private volatile ObsProblem _problem = ObsProblem.NotListening;
+
+    /// <summary>Logged once per distinct problem so a permanent misconfiguration is visible but not spammed.</summary>
+    private ObsProblem _loggedProblem = ObsProblem.None;
+
     public ObsClient(ConfigStore config, ILogger<ObsClient> log)
     {
         _config = config;
@@ -48,6 +54,8 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
     }
 
     public ObsStatus Status => _status;
+
+    public ObsProblem Problem => _status.Connected ? ObsProblem.None : _problem;
 
     /// <summary>Raised whenever the published status changes, so the state manager can push it.</summary>
     public event Action<ObsStatus>? StatusChanged;
@@ -182,10 +190,16 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
             {
                 return;
             }
+            catch (UriFormatException ex)
+            {
+                Diagnose(ObsProblem.BadUrl, ex, url);
+            }
             catch (Exception ex)
             {
-                // Expected while OBS is not running. Debug level keeps the log readable.
-                _log.LogDebug(ex, "OBS websocket connect/read failed for {Url}", url);
+                // Nothing listening is the ordinary case while OBS is closed — but it is also what a
+                // running OBS with its WebSocket server switched off looks like, which is the most
+                // common real misconfiguration. Classify it rather than swallowing it at Debug.
+                Diagnose(IsConnectionRefused(ex) ? ObsProblem.NotListening : ObsProblem.Other, ex, url);
             }
             finally
             {
@@ -214,7 +228,12 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
         while (socket.State == WebSocketState.Open && !ct.IsCancellationRequested)
         {
             var result = await socket.ReceiveAsync(buffer, ct).ConfigureAwait(false);
-            if (result.MessageType == WebSocketMessageType.Close) return;
+            if (result.MessageType == WebSocketMessageType.Close)
+            {
+                // obs-websocket rejects a bad password by closing with 4009 rather than by replying.
+                if ((int?)socket.CloseStatus == 4009) Diagnose(ObsProblem.AuthenticationFailed);
+                return;
+            }
 
             accumulated.Write(buffer, 0, result.Count);
             if (!result.EndOfMessage) continue;
@@ -243,6 +262,8 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
 
             case ObsOp.Identified:
                 _identified = true;
+                _problem = ObsProblem.None;
+                _loggedProblem = ObsProblem.None;
                 await OnIdentifiedAsync(ct).ConfigureAwait(false);
                 break;
 
@@ -432,6 +453,63 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
         }
 
         StatusChanged?.Invoke(status);
+    }
+
+    /// <summary>
+    /// "Connection refused" arrives buried: ClientWebSocket wraps it as
+    /// WebSocketException → HttpRequestException → SocketException(10061), so only walking the whole
+    /// chain finds it. Checking one level deep silently misclassified the single most common cause.
+    /// </summary>
+    internal static bool IsConnectionRefused(Exception? ex)
+    {
+        for (var current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is System.Net.Sockets.SocketException
+                {
+                    SocketErrorCode: System.Net.Sockets.SocketError.ConnectionRefused,
+                })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Records why the connection is down, and logs it once per distinct cause. A permanent
+    /// misconfiguration — OBS running with its WebSocket server off, or a wrong password — has to be
+    /// visible in the log, but it must not write a line every second for the rest of the day.
+    /// </summary>
+    private void Diagnose(ObsProblem problem, Exception? ex = null, string? url = null)
+    {
+        _problem = problem;
+
+        if (_loggedProblem == problem) return;
+        _loggedProblem = problem;
+
+        switch (problem)
+        {
+            case ObsProblem.NotListening:
+                _log.LogWarning(
+                    "Nothing is listening on {Url}. If OBS is open, its WebSocket server is probably " +
+                    "disabled: OBS → Tools → WebSocket Server Settings → Enable WebSocket server.", url);
+                break;
+
+            case ObsProblem.AuthenticationFailed:
+                _log.LogWarning(
+                    "OBS rejected the WebSocket password. Copy it from OBS → Tools → WebSocket Server " +
+                    "Settings → Show Connect Info into the panel's settings page.");
+                break;
+
+            case ObsProblem.BadUrl:
+                _log.LogWarning(ex, "The configured OBS WebSocket address is not usable: {Url}", url);
+                break;
+
+            default:
+                _log.LogWarning(ex, "Could not reach OBS at {Url}", url);
+                break;
+        }
     }
 
     private void FailAllPending()

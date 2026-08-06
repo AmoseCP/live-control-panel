@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.WebSockets;
 using Google;
 using Google.Apis.Requests;
 using LiveControlPanel.Core;
@@ -85,6 +86,42 @@ public class ObsProtocolTests
         var mask = ObsEventSubscription.All | ObsEventSubscription.InputVolumeMeters;
         Assert.True(mask.HasFlag(ObsEventSubscription.InputVolumeMeters));
         Assert.True(mask.HasFlag(ObsEventSubscription.Outputs));
+    }
+}
+
+/// <summary>
+/// Classifying "nothing is listening" correctly is what lets the pre-flight name the real fix (a
+/// running OBS with its WebSocket server switched off). The signal is buried several levels down the
+/// exception chain, and checking only one level misclassified the most common cause in the field.
+/// </summary>
+public class ObsConnectionDiagnosisTests
+{
+    [Fact]
+    public void Connection_refused_is_found_however_deeply_it_is_wrapped()
+    {
+        var refused = new System.Net.Sockets.SocketException(10061);   // WSAECONNREFUSED
+
+        // The shape ClientWebSocket actually produces.
+        var wrapped = new WebSocketException(
+            "Unable to connect to the remote server",
+            new HttpRequestException("actively refused", refused));
+
+        Assert.True(ObsClient.IsConnectionRefused(refused));
+        Assert.True(ObsClient.IsConnectionRefused(new HttpRequestException("x", refused)));
+        Assert.True(ObsClient.IsConnectionRefused(wrapped));
+    }
+
+    [Fact]
+    public void Other_failures_are_not_reported_as_nothing_listening()
+    {
+        Assert.False(ObsClient.IsConnectionRefused(null));
+        Assert.False(ObsClient.IsConnectionRefused(new Exception("boom")));
+
+        // A timeout or a reset is a different problem and must not claim the server is switched off.
+        Assert.False(ObsClient.IsConnectionRefused(
+            new WebSocketException("timeout", new System.Net.Sockets.SocketException(10060))));
+        Assert.False(ObsClient.IsConnectionRefused(
+            new HttpRequestException("reset", new System.Net.Sockets.SocketException(10054))));
     }
 }
 

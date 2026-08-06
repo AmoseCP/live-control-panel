@@ -61,6 +61,57 @@ public class PreflightTests
         Assert.Contains("OBS", item.Message.Zh);
     }
 
+    /// <summary>
+    /// The most common real cause is a running OBS with its WebSocket server switched off, which looks
+    /// identical to a closed OBS. Telling that operator to "open OBS" points at the one thing that is
+    /// already correct, so each cause must name its own fix.
+    /// </summary>
+    [Fact]
+    public async Task Obs_check_names_the_websocket_switch_when_nothing_is_listening()
+    {
+        using var host = new TestHost();
+        host.Obs.Connected = false;
+        host.Obs.ProblemToReport = LiveControlPanel.Obs.ObsProblem.NotListening;
+
+        var item = Item(await host.Preflight.RunAsync(), "obs");
+
+        Assert.False(item.Ok);
+        Assert.Contains("WebSocket", item.Message.Zh);
+        Assert.Contains("启用", item.Message.Zh);
+        Assert.Contains("Enable WebSocket server", item.Message.En);
+    }
+
+    [Fact]
+    public async Task Obs_check_names_the_password_when_obs_rejects_it()
+    {
+        using var host = new TestHost();
+        host.Obs.Connected = false;
+        host.Obs.ProblemToReport = LiveControlPanel.Obs.ObsProblem.AuthenticationFailed;
+
+        var item = Item(await host.Preflight.RunAsync(), "obs");
+
+        Assert.False(item.Ok);
+        Assert.Contains("密码", item.Message.Zh);
+        Assert.Contains("password", item.Message.En);
+        // Must not send them looking at whether OBS is open — it demonstrably is.
+        Assert.DoesNotContain("启用 WebSocket 服务器", item.Message.Zh);
+    }
+
+    [Fact]
+    public async Task Obs_check_names_the_address_when_it_is_unusable()
+    {
+        using var host = new TestHost();
+        host.Obs.Connected = false;
+        host.Obs.ProblemToReport = LiveControlPanel.Obs.ObsProblem.BadUrl;
+        host.Config.UpdateSettings(s => s.Obs.Url = "not-a-url");
+
+        var item = Item(await host.Preflight.RunAsync(), "obs");
+
+        Assert.False(item.Ok);
+        Assert.Contains("not-a-url", item.Message.Zh);
+        Assert.Contains("ws://localhost:4455", item.Message.Zh);
+    }
+
     [Fact]
     public async Task Obs_check_passes_when_connected()
     {
