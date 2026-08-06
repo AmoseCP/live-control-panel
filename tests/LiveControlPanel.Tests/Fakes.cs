@@ -71,6 +71,15 @@ public sealed class FakeYouTubeClient : IYouTubeClient
         return Task.CompletedTask;
     }
 
+    public List<string> DeletedIds { get; } = new();
+
+    public Task DeleteBroadcastAsync(string broadcastId, CancellationToken ct = default)
+    {
+        Throw(nameof(DeleteBroadcastAsync));
+        DeletedIds.Add(broadcastId);
+        return Task.CompletedTask;
+    }
+
     public Task<IReadOnlyList<BroadcastInfo>> ListUnfinishedBroadcastsAsync(CancellationToken ct = default)
     {
         Throw(nameof(ListUnfinishedBroadcastsAsync));

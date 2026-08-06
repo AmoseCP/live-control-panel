@@ -517,6 +517,107 @@ public sealed class EndpointTests : IAsyncLifetime
         Assert.Equal(9, state.Slides.Total);
     }
 
+    /// <summary>
+    /// Regression for a data-loss bug. The PUT body used to bind to AppSettings, whose sections carry
+    /// initializers and thus were never null — so a partial save (the Telegram test sends only three
+    /// fields) silently replaced the OBS password, scene names, slide setup and match window with
+    /// defaults. Against the old binding this test fails on every one of these assertions.
+    /// </summary>
+    [Fact]
+    public async Task A_partial_settings_save_does_not_reset_untouched_sections()
+    {
+        _fixtures.Config.UpdateSettings(s =>
+        {
+            s.Obs.Password = "obs-secret";
+            s.Obs.SceneCamera = "CamX";
+            s.Slides.Enabled = true;
+            s.Slides.WindowClass = "screenClass";
+            s.MatchWindow.AfterMinutes = 90;
+        });
+
+        // The exact shape the settings page's "send a test message" button PUTs.
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/settings?k={_code}")
+        {
+            Content = JsonContent.Create(new
+            {
+                telegramBotToken = "tok",
+                telegramChatId = "-100123",
+                telegramMessageDefault = "{title} {url}",
+            }),
+        };
+        request.Headers.Add(AccessGate.PinHeader, _pin);
+        Assert.True((await _client.SendAsync(request)).IsSuccessStatusCode);
+
+        var settings = _fixtures.Config.Settings;
+        Assert.Equal("tok", settings.TelegramBotToken);
+        Assert.Equal("-100123", settings.TelegramChatId);
+
+        // Everything the request did not mention is untouched.
+        Assert.Equal("obs-secret", settings.Obs.Password);
+        Assert.Equal("CamX", settings.Obs.SceneCamera);
+        Assert.True(settings.Slides.Enabled);
+        Assert.Equal("screenClass", settings.Slides.WindowClass);
+        Assert.Equal(90, settings.MatchWindow.AfterMinutes);
+    }
+
+    /// <summary>
+    /// An oversized window would let Wednesday's 04:40 window swallow the 18:00 service — the exact
+    /// ambiguity the -60/+120 default was chosen to avoid.
+    /// </summary>
+    [Fact]
+    public async Task Settings_reject_a_match_window_that_could_make_two_services_ambiguous()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/settings?k={_code}")
+        {
+            Content = JsonContent.Create(new { matchWindow = new { beforeMinutes = 60, afterMinutes = 100000 } }),
+        };
+        request.Headers.Add(AccessGate.PinHeader, _pin);
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(120, _fixtures.Config.Settings.MatchWindow.AfterMinutes);   // unchanged
+    }
+
+    [Fact]
+    public async Task Settings_reject_a_pin_the_numeric_unlock_keyboard_could_never_type()
+    {
+        foreach (var bad in new[] { "abcd", "123", "1234567", "12 34" })
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/settings?k={_code}")
+            {
+                Content = JsonContent.Create(new { settingsPin = bad }),
+            };
+            request.Headers.Add(AccessGate.PinHeader, _pin);
+
+            Assert.Equal(HttpStatusCode.BadRequest, (await _client.SendAsync(request)).StatusCode);
+        }
+
+        Assert.Equal(_pin, _fixtures.Config.Settings.SettingsPin);
+    }
+
+    /// <summary>
+    /// A weekday of 7 or a start time of "25:00" errors nowhere at save time — the service just never
+    /// matches, discovered at 04:40 as an inexplicable "本日无排期".
+    /// </summary>
+    [Fact]
+    public async Task Templates_reject_invalid_weekdays_and_invalid_start_times()
+    {
+        var badWeekday = await PutTemplates(new[]
+        {
+            new { id = "x", name = "X", weekdays = new[] { 7 }, startTime = "09:00" },
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, badWeekday.StatusCode);
+
+        var badTime = await PutTemplates(new[]
+        {
+            new { id = "x", name = "X", weekdays = new[] { 1 }, startTime = "25:99" },
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, badTime.StatusCode);
+
+        Assert.Equal(5, _fixtures.Config.Templates.Count);   // seed untouched
+    }
+
     [Fact]
     public async Task Templates_cannot_be_saved_empty_or_with_duplicate_ids()
     {

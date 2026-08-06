@@ -28,7 +28,7 @@
 
 ```bash
 # 需要 .NET 8 SDK
-dotnet test                                    # 287 个单元/接口测试
+dotnet test                                    # 297 个单元/接口测试
 dotnet run --project src/LiveControlPanel       # 默认 http://localhost:5088
 ```
 
@@ -237,7 +237,7 @@ sunday-service    [0]         10:30  → 1
 
 ## 测试
 
-287 个测试，全部不接触真实的 YouTube / OBS / Telegram。
+297 个测试，全部不接触真实的 YouTube / OBS / Telegram。
 
 ```bash
 dotnet test
@@ -279,6 +279,17 @@ dotnet test
 1. **`IYouTubeClient.BindAsync` 撞上 Minimal API 的绑定约定。** ASP.NET Core 把任何 `BindAsync(...)` 当作参数绑定约定，路由表构建直接失败 —— **所有**接口一律 500。全部单元测试却照样通过，因为没有一个测试会去构建 Web 应用。已改名为 `BindStreamAsync`，并补上 `EndpointTests.The_whole_route_table_materializes` 守住这一类问题。
 
 2. **手动选定的场次会被排期刷新冲掉。** `StateManager` 每次刷新都用自动匹配结果覆盖 `today`，于是需求 6.1 的「不是这一场？」和临时直播选完就没了。已加 `TodayState.Manual`：显式选择优先于日历，只有「开始另一场」会清除它。
+
+### 一次全面审查补上的缺陷（摘要）
+
+- **部分保存会重置未提交的设置段**（数据丢失）：`PUT /api/settings` 曾绑定 `AppSettings`，其各段属性带初始化器、永不为 null —— 设置页「发送测试消息」那次只含三个字段的保存，会把 OBS 密码、场景名、幻灯片配置、时间窗静默重置为默认值。已改为真正可空的 `SettingsPatch`，并有回归测试钉住。
+- **遗留直播一键清理对没开播过的会报错**：`created`/`ready` 状态不能 `transition(complete)`（YouTube 拒绝 `invalidTransition`），但它们照样占着共享推流密钥 —— 这类现在走 `delete`，只有 `live`/`testing` 才 transition。
+- **没有日切**：面板长期运行时，周三晚场的「已结束」会留到周四凌晨，04:40 的操作员看到的不是自动就绪的 Ready。现在过了午夜自动清理已完成的场次与未开播的手动选择（正在直播的永不动），`StateManager` 时钟可注入以便测试。
+- **等待上线对已结束的直播会空轮询满 60 秒**，然后给出永远不会成功的「重试」——现在立即失败并说明原因。
+- **OBS 密码错误引发每秒重连**：TCP 连接成功就重置退避，而密码被拒正是「连接成功后被关闭」——现在只有完成身份认证的会话才重置退避；另外给单条消息加了 8MB 上限。
+- **WebSocket 推送可能乱序**：每条消息 `Task.Run` 抢信号量，编排快速连推时旧状态可能覆盖新状态 —— 改为按客户端串联发送，有顺序测试守护。
+- **前端网络失败无 catch**：面板重启瞬间点「开始直播」，按钮会永久禁用 —— fetch 失败现在解析为失败结果而不是 rejection。
+- **输入校验**：时间窗限 0–720 分钟（守住双场次日不歧义）、PIN 强制四到六位数字、模板 weekday 限 0–6 且排期场次必须有可解析的开始时间。
 
 ---
 

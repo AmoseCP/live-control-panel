@@ -27,6 +27,12 @@ public sealed class TestHost : IDisposable
         Hub = new StateHub(NullLogger<StateHub>.Instance);
         Slides = new StubSlideController();
         State = new StateManager(Config, Hub, Slides, NullLogger<StateManager>.Instance);
+
+        // Frozen clock: Wednesday 2026-08-05 noon — outside every match window, matching the 8/5
+        // dates the tests pin. This also stops the suite from depending on the real wall clock:
+        // before this, running the tests at 17:30 on a real Wednesday would have auto-matched a
+        // service and changed the outcome of every "nothing scheduled" assertion.
+        State.Clock = () => new DateTime(2026, 8, 5, 12, 0, 0);
         YouTube = new FakeYouTubeClient();
         Obs = new FakeObsClient();
         Telegram = new FakeTelegramClient();

@@ -48,6 +48,11 @@
         if (text) { try { data = JSON.parse(text); } catch (e) { data = null; } }
         return { status: response.status, ok: response.ok, data: data };
       });
+    }).catch(function () {
+      // A network failure must resolve, not reject: every caller does its cleanup — most
+      // importantly re-enabling the start button — inside .then(). An unhandled rejection at the
+      // moment the panel restarts left the button disabled until someone thought to reload.
+      return { status: 0, ok: false, data: null };
     });
   }
 

@@ -19,6 +19,8 @@ namespace LiveControlPanel.Obs;
 /// </summary>
 public sealed class ObsClient : IObsClient, IAsyncDisposable
 {
+    private const int MaxMessageBytes = 8 * 1024 * 1024;
+
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(6);
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
@@ -176,13 +178,13 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
         while (!ct.IsCancellationRequested)
         {
             var url = _config.Settings.Obs.Url;
+            var identified = false;
             try
             {
                 using var socket = new ClientWebSocket();
                 await socket.ConnectAsync(new Uri(url), ct).ConfigureAwait(false);
                 _socket = socket;
                 _log.LogInformation("OBS websocket connected to {Url}", url);
-                backoff = TimeSpan.FromSeconds(1);
 
                 await ReadLoopAsync(socket, ct).ConfigureAwait(false);
             }
@@ -203,6 +205,7 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
             }
             finally
             {
+                identified = _identified;
                 _identified = false;
                 _socket = null;
                 FailAllPending();
@@ -213,10 +216,16 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
                 });
             }
 
+            // Only a session that completed identification resets the backoff. Resetting on a bare
+            // TCP connect — which a rejected password also produces, since OBS accepts the socket
+            // and then closes with 4009 — turned a permanent misconfiguration into a reconnect
+            // attempt every single second for the rest of the day.
+            backoff = identified
+                ? TimeSpan.FromSeconds(1)
+                : TimeSpan.FromTicks(Math.Min(backoff.Ticks * 2, MaxBackoff.Ticks));
+
             try { await Task.Delay(backoff, ct).ConfigureAwait(false); }
             catch (OperationCanceledException) { return; }
-
-            backoff = TimeSpan.FromTicks(Math.Min(backoff.Ticks * 2, MaxBackoff.Ticks));
         }
     }
 
@@ -236,6 +245,16 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
             }
 
             accumulated.Write(buffer, 0, result.Count);
+
+            // The accumulator was unbounded. No legitimate obs-websocket message on this panel's
+            // request set comes anywhere near this; a runaway frame must drop the connection rather
+            // than grow the heap until the panel dies mid-service.
+            if (accumulated.Length > MaxMessageBytes)
+            {
+                _log.LogWarning("OBS message exceeded {Max} bytes; dropping the connection", MaxMessageBytes);
+                return;
+            }
+
             if (!result.EndOfMessage) continue;
 
             var json = Encoding.UTF8.GetString(accumulated.ToArray());

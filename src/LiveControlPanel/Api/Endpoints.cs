@@ -23,6 +23,30 @@ public sealed record CreateBroadcastBody(
 public sealed record ApiResult(bool Ok, Msg Message, int? FailedStep = null);
 
 /// <summary>
+/// PUT /api/settings body. A dedicated patch type whose sections are genuinely nullable.
+///
+/// Binding straight to <see cref="AppSettings"/> was a data-loss bug: its properties carry
+/// initializers, so a section absent from the JSON still arrived as a fresh default instance and
+/// "is not null" was always true. Any partial save — the settings page's Telegram test sends only
+/// three fields — silently reset the OBS password, scene names, slide configuration and match
+/// window to their defaults.
+/// </summary>
+public sealed record SettingsPatch(
+    string? StreamId,
+    string? DefaultDescription,
+    string? DefaultThumbnail,
+    string? TelegramBotToken,
+    string? TelegramChatId,
+    string? TelegramMessageDefault,
+    string? SettingsPin,
+    ObsSettings? Obs,
+    SlidesSettings? Slides,
+    MatchWindowSettings? MatchWindow,
+    YouTubePatch? YouTube);
+
+public sealed record YouTubePatch(string? ClientId, string? ClientSecret, int? AssumedValidityDays);
+
+/// <summary>
 /// A refused request, carrying *which* gate refused it. Both gates answer 403, and without this the
 /// page cannot tell "your access code is stale" from "your PIN is wrong" — so it guesses, and the
 /// guess sends the operator to fix the wrong thing.
@@ -278,9 +302,30 @@ public static class Endpoints
                 : PinRequired());
 
         app.MapPut("/api/settings", (
-            AppSettings body, ConfigStore config, AccessGate gate, HttpContext context, StateManager state) =>
+            SettingsPatch body, ConfigStore config, AccessGate gate, HttpContext context, StateManager state) =>
         {
             if (!gate.IsValidPin(context)) return PinRequired();
+
+            // 0–720 keeps the two-service days unambiguous: 04:40 plus 720 minutes still closes
+            // before the 18:00 window can open at its widest. An unchecked value here would let the
+            // Wednesday morning window swallow the evening service.
+            if (body.MatchWindow is { } mw
+                && (mw.BeforeMinutes is < 0 or > 720 || mw.AfterMinutes is < 0 or > 720))
+            {
+                return Results.BadRequest(new ApiResult(false, new Msg(
+                    "匹配窗口必须在 0 到 720 分钟之间。",
+                    "The match window must be between 0 and 720 minutes.")));
+            }
+
+            // The UI promises four to six digits; enforce it here so a hand-crafted request cannot
+            // set a PIN the unlock screen's numeric keyboard can never reproduce.
+            if (!string.IsNullOrWhiteSpace(body.SettingsPin)
+                && !System.Text.RegularExpressions.Regex.IsMatch(body.SettingsPin, "^[0-9]{4,6}$"))
+            {
+                return Results.BadRequest(new ApiResult(false, new Msg(
+                    "设置密码必须是四到六位数字。",
+                    "The settings password must be four to six digits.")));
+            }
 
             config.UpdateSettings(current =>
             {
@@ -292,15 +337,24 @@ public static class Endpoints
                 current.TelegramBotToken = body.TelegramBotToken ?? current.TelegramBotToken;
                 current.TelegramChatId = body.TelegramChatId ?? current.TelegramChatId;
                 current.TelegramMessageDefault = body.TelegramMessageDefault ?? current.TelegramMessageDefault;
-                if (body.Obs is not null) current.Obs = body.Obs;
-                if (body.Slides is not null) current.Slides = body.Slides;
-                if (body.MatchWindow is not null) current.MatchWindow = body.MatchWindow;
-                if (body.YouTube is not null)
+                if (body.Obs is { } obs)
                 {
-                    current.YouTube.ClientId = body.YouTube.ClientId ?? current.YouTube.ClientId;
-                    current.YouTube.ClientSecret = body.YouTube.ClientSecret ?? current.YouTube.ClientSecret;
-                    if (body.YouTube.AssumedValidityDays > 0)
-                        current.YouTube.AssumedValidityDays = body.YouTube.AssumedValidityDays;
+                    // A blank URL would crash every reconnect attempt; keep the working one.
+                    obs.Url = string.IsNullOrWhiteSpace(obs.Url) ? current.Obs.Url : obs.Url;
+                    current.Obs = obs;
+                }
+                if (body.Slides is { } slides)
+                {
+                    if (string.IsNullOrWhiteSpace(slides.Strategy)) slides.Strategy = "PostMessage";
+                    current.Slides = slides;
+                }
+                if (body.MatchWindow is not null) current.MatchWindow = body.MatchWindow;
+                if (body.YouTube is { } yt)
+                {
+                    current.YouTube.ClientId = yt.ClientId ?? current.YouTube.ClientId;
+                    current.YouTube.ClientSecret = yt.ClientSecret ?? current.YouTube.ClientSecret;
+                    if (yt.AssumedValidityDays is > 0)
+                        current.YouTube.AssumedValidityDays = yt.AssumedValidityDays.Value;
                 }
                 if (!string.IsNullOrWhiteSpace(body.SettingsPin)) current.SettingsPin = body.SettingsPin;
             });
@@ -346,6 +400,21 @@ public static class Endpoints
 
             if (body.Select(t => t.Id.ToLowerInvariant()).Distinct().Count() != body.Count)
                 return Results.BadRequest(new ApiResult(false, new Msg("场次 id 不能重复。", "Service ids must be unique.")));
+
+            foreach (var template in body)
+            {
+                // A weekday of 7 or a start time of "25:00" would not error anywhere — the service
+                // would simply never match, discovered at 04:40 as "本日无排期".
+                if (template.Weekdays.Any(d => d is < 0 or > 6))
+                    return Results.BadRequest(new ApiResult(false, new Msg(
+                        "星期必须是 0（周日）到 6（周六）。",
+                        "Weekdays must be 0 (Sunday) through 6 (Saturday).")));
+
+                if (template.Weekdays.Count > 0 && !ScheduleMatcher.TryParseStartTime(template.StartTime, out _))
+                    return Results.BadRequest(new ApiResult(false, new Msg(
+                        $"「{template.Name}」需要有效的开始时间（如 18:00）。",
+                        $"\"{template.Name}\" needs a valid start time (e.g. 18:00).")));
+            }
 
             config.SaveTemplates(body);
             return Results.Json(new ApiResult(true, new Msg("场次已保存。", "Services saved.")), Json.Options);

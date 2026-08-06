@@ -127,6 +127,17 @@ public sealed class YouTubeClient : IYouTubeClient, IDisposable
         _log.LogInformation("Transitioned broadcast {Id} to complete", broadcastId);
     }
 
+    public async Task DeleteBroadcastAsync(string broadcastId, CancellationToken ct = default)
+    {
+        var service = await ServiceAsync(ct).ConfigureAwait(false);
+
+        await Retry.TransientAsync(
+            token => service.LiveBroadcasts.Delete(broadcastId).ExecuteAsync(token),
+            _log, ct).ConfigureAwait(false);
+
+        _log.LogInformation("Deleted broadcast {Id}", broadcastId);
+    }
+
     public async Task<IReadOnlyList<BroadcastInfo>> ListUnfinishedBroadcastsAsync(CancellationToken ct = default)
     {
         var service = await ServiceAsync(ct).ConfigureAwait(false);

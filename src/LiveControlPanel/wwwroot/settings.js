@@ -150,8 +150,8 @@
         strategy: value('slides-strategy')
       },
       matchWindow: {
-        beforeMinutes: parseInt(value('window-before'), 10) || 60,
-        afterMinutes: parseInt(value('window-after'), 10) || 120
+        beforeMinutes: intOr(value('window-before'), 60),
+        afterMinutes: intOr(value('window-after'), 120)
       },
       youTube: {
         clientId: value('yt-client-id'),
@@ -172,6 +172,12 @@
   function splitList(text) {
     return (text || '').split(',').map(function (s) { return s.trim(); })
       .filter(function (s) { return s.length > 0; });
+  }
+
+  // parseInt(x) || fallback turns a legitimate 0 into the fallback; 0 minutes is a valid window edge.
+  function intOr(text, fallback) {
+    var n = parseInt(text, 10);
+    return isNaN(n) ? fallback : n;
   }
 
   /* ---- access info ------------------------------------------------------- */

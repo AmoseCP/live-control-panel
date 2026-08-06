@@ -19,6 +19,12 @@ public sealed class StateManager
     private readonly object _gate = new();
     private readonly RuntimeState _state = new();
 
+    /// <summary>
+    /// Time source for schedule matching, day rollover and ServerTime. Injectable because the
+    /// rollover rules cannot be exercised against the wall clock; production uses the real time.
+    /// </summary>
+    internal Func<DateTime> Clock = () => DateTime.Now;
+
     public StateManager(ConfigStore config, StateHub hub, ISlideController slides, ILogger<StateManager> log)
     {
         _config = config;
@@ -32,8 +38,9 @@ public sealed class StateManager
     {
         lock (_gate)
         {
-            RefreshScheduleLocked(DateTime.Now);
-            _state.ServerTime = DateTime.Now;
+            var now = Clock();
+            RefreshScheduleLocked(now);
+            _state.ServerTime = now;
             return Clone(_state);
         }
     }
@@ -43,9 +50,10 @@ public sealed class StateManager
         RuntimeState snapshot;
         lock (_gate)
         {
+            var now = Clock();
             change(_state);
-            RefreshScheduleLocked(DateTime.Now);
-            _state.ServerTime = DateTime.Now;
+            RefreshScheduleLocked(now);
+            _state.ServerTime = now;
             snapshot = Clone(_state);
         }
         _hub.Broadcast(snapshot);
@@ -95,6 +103,26 @@ public sealed class StateManager
     {
         var templates = _config.SchedulableTemplates().ToList();
         var window = _config.Settings.MatchWindow;
+
+        // Day rollover. The panel runs for weeks as a logon task, so yesterday's finished work must
+        // retire on its own: Thursday's 04:40 operator has to meet a fresh, auto-matched Ready
+        // screen, not Wednesday evening's "已结束" needing an extra tap (FR 6.1, zero training).
+        // A broadcast that is still live is never touched — only completed work and manual picks
+        // that were never started.
+        if (_state.Today?.ScheduledStart is { } scheduled && scheduled.Date < now.Date)
+        {
+            if (_state.Broadcast?.Status == BroadcastStatus.Complete)
+            {
+                _state.Broadcast = null;
+                _state.Today = null;
+                _state.Steps = new List<StepState>();
+                _state.Telegram = new TelegramState();
+            }
+            else if (_state.Broadcast is null && _state.Today.Manual)
+            {
+                _state.Today = null;
+            }
+        }
 
         // An explicit choice outranks the calendar. The operator picked this service on purpose —
         // possibly for an ad-hoc stream outside every window — so neither a match nor the absence of

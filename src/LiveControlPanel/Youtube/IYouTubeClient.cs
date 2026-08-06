@@ -37,6 +37,13 @@ public interface IYouTubeClient
     Task TransitionToCompleteAsync(string broadcastId, CancellationToken ct = default);
 
     /// <summary>
+    /// Removes a broadcast that never went live. A created/ready broadcast cannot be transitioned to
+    /// complete — YouTube rejects that as invalidTransition — yet it still holds the shared stream
+    /// key, so deleting is the only way to release it.
+    /// </summary>
+    Task DeleteBroadcastAsync(string broadcastId, CancellationToken ct = default);
+
+    /// <summary>
     /// Broadcasts still in a live-ish state. FR 4.4's highest-risk pre-flight item: on Wednesday and
     /// Friday two services share one stream key, and the evening operator must not collide with a
     /// morning broadcast that was never ended.

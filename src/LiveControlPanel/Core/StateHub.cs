@@ -29,7 +29,7 @@ public sealed class StateHub
 
         try
         {
-            await client.SendAsync(Serialize(initial), ct).ConfigureAwait(false);
+            await client.EnqueueSendAsync(Serialize(initial)).ConfigureAwait(false);
 
             // The client sends nothing meaningful; reading just detects disconnection.
             var buffer = new byte[1024];
@@ -44,7 +44,6 @@ public sealed class StateHub
         finally
         {
             _clients.TryRemove(id, out _);
-            client.Dispose();
         }
     }
 
@@ -55,18 +54,11 @@ public sealed class StateHub
         var payload = Serialize(state);
         foreach (var (id, client) in _clients.ToArray())
         {
-            _ = Task.Run(async () =>
+            client.EnqueueSendAsync(payload).ContinueWith(t =>
             {
-                try
-                {
-                    await client.SendAsync(payload, CancellationToken.None).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    _log.LogDebug(ex, "Dropping websocket client {Id}", id);
-                    _clients.TryRemove(id, out _);
-                }
-            });
+                _log.LogDebug(t.Exception, "Dropping websocket client {Id}", id);
+                _clients.TryRemove(id, out _);
+            }, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
         }
     }
 
@@ -74,32 +66,42 @@ public sealed class StateHub
         Encoding.UTF8.GetBytes(JsonSerializer.Serialize(state, Json.Options));
 
     /// <summary>
-    /// One connected browser. The semaphore matters: a WebSocket permits only one send at a time, and
-    /// OBS status polling plus an operator action can easily overlap.
+    /// One connected browser. Sends are chained, not merely serialized: the previous fire-and-forget
+    /// tasks behind a semaphore could still reach it out of order, letting an older state overwrite a
+    /// newer one on the page during the rapid step-by-step pushes of the start orchestration.
     /// </summary>
-    private sealed class Client : IDisposable
+    private sealed class Client
     {
         private readonly WebSocket _socket;
-        private readonly SemaphoreSlim _sendGate = new(1, 1);
+        private readonly object _gate = new();
+        private Task _chain = Task.CompletedTask;
 
         public Client(WebSocket socket) => _socket = socket;
 
-        public async Task SendAsync(byte[] payload, CancellationToken ct)
+        /// <summary>Queues a send after everything already queued. The returned task is this send only.</summary>
+        public Task EnqueueSendAsync(byte[] payload)
         {
-            if (_socket.State != WebSocketState.Open) return;
+            lock (_gate)
+            {
+                var send = _chain
+                    .ContinueWith(_ => SendCoreAsync(payload),
+                        CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default)
+                    .Unwrap();
 
-            await _sendGate.WaitAsync(ct).ConfigureAwait(false);
-            try
-            {
-                if (_socket.State != WebSocketState.Open) return;
-                await _socket.SendAsync(payload, WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
-            }
-            finally
-            {
-                _sendGate.Release();
+                // The chain itself never faults: a failed send is the caller's signal to drop the
+                // client, not a reason to wedge every later send behind an exception.
+                _chain = send.ContinueWith(_ => { },
+                    CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+
+                return send;
             }
         }
 
-        public void Dispose() => _sendGate.Dispose();
+        private async Task SendCoreAsync(byte[] payload)
+        {
+            if (_socket.State != WebSocketState.Open) return;
+            await _socket.SendAsync(payload, WebSocketMessageType.Text, true, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
     }
 }

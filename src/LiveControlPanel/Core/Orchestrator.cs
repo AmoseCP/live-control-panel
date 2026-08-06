@@ -261,6 +261,21 @@ public sealed class Orchestrator
                 return new StepMessage(new Msg("YouTube 已上线", "YouTube is live"));
             }
 
+            // Ended while we were waiting — stopped from this panel in a race, or in YouTube Studio.
+            // Polling a finished broadcast for the remaining minute would end in a "retry this step"
+            // that can never succeed.
+            if (status is "complete" or "revoked")
+            {
+                _state.Mutate(s =>
+                {
+                    if (s.Broadcast is not null) s.Broadcast.Status = BroadcastStatus.Complete;
+                });
+                throw new LocalizedInvalidOperationException(new Msg(
+                    "这场直播已经结束，不会再上线。若要再播一场，请点「开始另一场」。",
+                    "This broadcast has already ended and will not go live. Use \"start another " +
+                    "service\" to run a new one."));
+            }
+
             if (status == "testing")
                 _state.Mutate(s => s.Broadcast!.Status = BroadcastStatus.Testing);
 
@@ -334,7 +349,15 @@ public sealed class Orchestrator
             foreach (var broadcast in unfinished)
             {
                 if (broadcast.Id == current) continue;
-                await _youtube.TransitionToCompleteAsync(broadcast.Id, ct).ConfigureAwait(false);
+
+                // Only a broadcast that actually went on air can transition to complete. A leftover
+                // that never started (created/ready) gets invalidTransition from YouTube — but it
+                // still holds the shared stream key, so it is deleted instead.
+                if (broadcast.LifeCycleStatus is "live" or "testing" or "liveStarting")
+                    await _youtube.TransitionToCompleteAsync(broadcast.Id, ct).ConfigureAwait(false);
+                else
+                    await _youtube.DeleteBroadcastAsync(broadcast.Id, ct).ConfigureAwait(false);
+
                 ended++;
             }
 

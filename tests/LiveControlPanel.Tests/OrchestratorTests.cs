@@ -348,20 +348,50 @@ public class OrchestratorTests
 
     // ---------------------------------------------------------------- T-04 leftover broadcast
 
+    /// <summary>
+    /// Only a broadcast that went on air can transition to complete; YouTube rejects the same call on
+    /// a created/ready one as invalidTransition — yet those still hold the shared stream key, so the
+    /// one-click fix must delete them instead of erroring out on the highest-risk pre-flight path.
+    /// </summary>
     [Fact]
-    public async Task End_previous_completes_every_leftover_broadcast()
+    public async Task End_previous_ends_live_broadcasts_and_deletes_never_started_ones()
     {
         using var host = new TestHost();
         host.YouTube.Unfinished = new List<BroadcastInfo>
         {
             new("old1", "8/5/2026 Morning Service", "live", "https://www.youtube.com/live/old1"),
             new("old2", "8/4/2026 Morning Service", "ready", "https://www.youtube.com/live/old2"),
+            new("old3", "8/3/2026 Morning Service", "created", "https://www.youtube.com/live/old3"),
         };
 
         var outcome = await host.Orchestrator.EndPreviousAsync();
 
         Assert.True(outcome.Ok);
-        Assert.Equal(new[] { "old1", "old2" }, host.YouTube.TransitionedIds);
+        Assert.Equal(new[] { "old1" }, host.YouTube.TransitionedIds);
+        Assert.Equal(new[] { "old2", "old3" }, host.YouTube.DeletedIds);
+    }
+
+    /// <summary>
+    /// The broadcast can end while step 6 waits — stopped from this panel in a race, or in YouTube
+    /// Studio. Polling a finished broadcast for the remaining minute produced a "retry" that could
+    /// never succeed; it must fail immediately with the real explanation.
+    /// </summary>
+    [Fact]
+    public async Task Await_live_fails_immediately_when_the_broadcast_already_ended()
+    {
+        using var host = new TestHost();
+        host.SetToday();
+        host.YouTube.LifeCycleStatus = "complete";
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var outcome = await host.Orchestrator.StartTodayAsync();
+        stopwatch.Stop();
+
+        Assert.False(outcome.Ok);
+        Assert.Equal(Orchestrator.StepAwaitLive, outcome.FailedStep);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(30), "must not sit out the 60s poll");
+        Assert.Contains("已经结束", outcome.Message.Zh);
+        Assert.Equal(Phase.Ended, host.State.Snapshot().Phase);
     }
 
     [Fact]

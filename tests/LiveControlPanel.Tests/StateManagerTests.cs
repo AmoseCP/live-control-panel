@@ -176,6 +176,64 @@ public class StateManagerTests
         Assert.True((DateTime.Now - action.At).Duration() < TimeSpan.FromMinutes(1));
     }
 
+    // ---------------------------------------------------------------- day rollover
+
+    /// <summary>
+    /// The panel runs for weeks as a logon task, so Wednesday evening's finished service must retire
+    /// overnight: Thursday's 04:40 operator has to meet an auto-matched Ready screen, not an
+    /// "已结束" screen that needs an extra "start another" tap (FR 6.1, zero training).
+    /// </summary>
+    [Fact]
+    public async Task A_finished_service_retires_itself_overnight()
+    {
+        using var host = new TestHost();
+        host.SetToday();                                   // Wednesday 8/5 18:00
+        await host.Orchestrator.StartTodayAsync();
+        await host.Notifications.SendCurrentAsync();
+        await host.Orchestrator.StopAsync();
+        Assert.Equal(Phase.Ended, host.State.Snapshot().Phase);
+
+        // Thursday 04:00 — inside the morning service's window (03:40–06:40).
+        host.State.Clock = () => new DateTime(2026, 8, 6, 4, 0, 0);
+
+        var state = host.State.Snapshot();
+        Assert.Equal(Phase.Ready, state.Phase);
+        Assert.Null(state.Broadcast);
+        Assert.Equal("8/6/2026 Morning Service", state.Today!.Title);
+        // The Telegram idempotency marker belongs to yesterday's broadcast, not today's.
+        Assert.Null(state.Telegram.SentAt);
+    }
+
+    [Fact]
+    public void An_unused_manual_pick_does_not_survive_midnight()
+    {
+        using var host = new TestHost();
+        host.SetToday();                                   // picked Wednesday, never started
+
+        host.State.Clock = () => new DateTime(2026, 8, 6, 12, 0, 0);   // Thursday noon, no window
+
+        var state = host.State.Snapshot();
+        Assert.Equal(Phase.NoSchedule, state.Phase);
+        Assert.Null(state.Today);
+        Assert.NotNull(state.NextService);
+    }
+
+    /// <summary>A stream still on air is never retired by the calendar, whatever the clock says.</summary>
+    [Fact]
+    public async Task A_live_broadcast_is_never_retired_by_the_clock()
+    {
+        using var host = new TestHost();
+        host.SetToday();
+        await host.Orchestrator.StartTodayAsync();
+        Assert.Equal(Phase.Live, host.State.Snapshot().Phase);
+
+        host.State.Clock = () => new DateTime(2026, 8, 6, 4, 0, 0);
+
+        var state = host.State.Snapshot();
+        Assert.Equal(Phase.Live, state.Phase);
+        Assert.NotNull(state.Broadcast);
+    }
+
     [Fact]
     public void Snapshots_are_deep_copies_so_callers_cannot_mutate_live_state()
     {

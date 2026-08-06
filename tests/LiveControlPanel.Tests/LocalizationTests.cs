@@ -124,6 +124,20 @@ public class LocalizationTests
     }
 
     [Fact]
+    public async Task An_already_ended_broadcast_is_explained_in_both_languages()
+    {
+        using var host = new TestHost();
+        host.SetToday();
+        host.YouTube.LifeCycleStatus = "complete";
+
+        var outcome = await host.Orchestrator.StartTodayAsync();
+
+        Assert.False(outcome.Ok);
+        AssertBothLanguages(outcome.Message, "already ended");
+        AssertEnglishHasNoChinese(outcome.Message, "already ended");
+    }
+
+    [Fact]
     public async Task Stop_and_end_previous_outcomes_are_bilingual()
     {
         using var host = new TestHost();
@@ -270,12 +284,12 @@ public class LocalizationTests
     }
 
     [Fact]
-    public void A_state_snapshot_carries_both_languages_for_every_message_it_contains()
+    public async Task A_state_snapshot_carries_both_languages_for_every_message_it_contains()
     {
         using var host = new TestHost();
         host.SetToday();
 
-        var items = host.Preflight.RunAsync().GetAwaiter().GetResult();
+        var items = await host.Preflight.RunAsync();
         host.State.Mutate(s => s.Preflight = items);
 
         var json = JsonSerializer.Serialize(host.State.Snapshot(), Json.Options);
