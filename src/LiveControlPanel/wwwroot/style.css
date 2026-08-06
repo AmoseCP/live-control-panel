@@ -4,17 +4,25 @@
  * Everything is sized for a thumb at 04:40, in portrait or landscape.
  */
 
+/*
+ * Soft indigo night theme. Still dark — the panel is read in a dark room at 04:40 and must not
+ * glare — but the surfaces carry a blue-violet hue instead of near-black, and headings, actions
+ * and links each get their own gentle color so the page has warmth and hierarchy.
+ */
 :root {
-  --bg: #12141a;
-  --panel: #1c1f28;
-  --panel-2: #252935;
-  --line: #333846;
-  --text: #eef1f6;
-  --muted: #9aa3b2;
-  --ok: #2f9e5f;
-  --warn: #c98a1a;
-  --bad: #cf4444;
-  --accent: #2f6fd0;
+  --bg: #161927;
+  --panel: #1f2333;
+  --panel-2: #292e42;
+  --line: #383e56;
+  --text: #e9ecf6;
+  --muted: #a4adc8;
+  --heading: #a3b3e6;   /* soft periwinkle for section headings */
+  --action: #96aee6;    /* tint for secondary/ghost actions, so actions read as actions */
+  --link: #b9cdf2;      /* URLs and copyable values */
+  --ok: #46b878;
+  --warn: #d99b2e;
+  --bad: #e05a5a;
+  --accent: #4a7fe0;
   --radius: 12px;
   --tap: 56px;
 }
@@ -27,6 +35,12 @@ html, body {
   color: var(--text);
   font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
   -webkit-text-size-adjust: 100%;
+}
+
+/* A faint static glow at the top takes the flatness off the background. Not an animation. */
+body {
+  background-image: linear-gradient(180deg, #1d2236 0%, var(--bg) 340px);
+  background-repeat: no-repeat;
 }
 
 body {
@@ -56,7 +70,7 @@ button.lang {
   background: transparent;
   color: var(--muted);
 }
-h2 { font-size: 1rem; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
+h2 { font-size: 1rem; margin: 0 0 10px; font-weight: 600; color: var(--heading); }
 
 .card {
   background: var(--panel);
@@ -110,12 +124,12 @@ button {
   touch-action: manipulation;
 }
 
-button:active { background: #303646; }
+button:active { background: #333952; }
 button:disabled { opacity: 0.45; cursor: default; }
 
 button.primary { background: var(--accent); border-color: var(--accent); font-size: 1.125rem; min-height: 72px; }
 button.danger { background: var(--bad); border-color: var(--bad); }
-button.ghost { background: transparent; min-height: 48px; font-weight: 500; color: var(--muted); }
+button.ghost { background: transparent; min-height: 48px; font-weight: 500; color: var(--action); }
 
 .row { display: flex; gap: 10px; }
 .row > * { flex: 1; }
@@ -223,7 +237,7 @@ button.ghost { background: transparent; min-height: 48px; font-weight: 500; colo
 .linkbox {
   width: 100%;
   font: 0.9375rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: var(--text);
+  color: var(--link);
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: var(--radius);
