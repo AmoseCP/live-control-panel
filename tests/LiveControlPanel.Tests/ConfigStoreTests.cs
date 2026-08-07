@@ -214,6 +214,24 @@ public class ConfigStoreTests : IDisposable
         Assert.False(string.IsNullOrWhiteSpace(config.Settings.AccessCode));
     }
 
+    /// <summary>
+    /// Reseeding after corruption regenerates the access code, which invalidates every iPad
+    /// bookmark and the printed QR at once — the unreadable original must be preserved so an
+    /// administrator can recover the old code and secrets instead of re-provisioning everything.
+    /// </summary>
+    [Fact]
+    public void A_corrupt_settings_file_is_preserved_as_a_backup_before_reseeding()
+    {
+        var paths = new AppPaths(_root);
+        paths.EnsureCreated();
+        File.WriteAllText(paths.SettingsFile, "{ this is not json");
+
+        _ = new ConfigStore(paths);
+
+        var backup = Directory.GetFiles(Path.GetDirectoryName(paths.SettingsFile)!, "settings.json.bad-*").Single();
+        Assert.Equal("{ this is not json", File.ReadAllText(backup));
+    }
+
     [Fact]
     public void A_corrupt_templates_file_falls_back_to_the_seed()
     {

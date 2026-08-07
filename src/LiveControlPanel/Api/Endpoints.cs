@@ -249,8 +249,14 @@ public static class Endpoints
 
     private static void MapAuth(WebApplication app)
     {
-        app.MapGet("/auth/start", (YouTubeAuth auth, ConfigStore config) =>
+        app.MapGet("/auth/start", (YouTubeAuth auth, ConfigStore config, AccessGate gate, HttpContext context) =>
         {
+            // Settings-class action: rebinding the channel authorization must not be reachable
+            // with the access code alone — anyone who scanned the QR could otherwise hand the
+            // panel their own Google account. The PIN arrives as ?pin= because this is a
+            // top-level navigation to Google's consent page, which cannot carry a header.
+            if (!gate.IsValidPin(context)) return PinRequired();
+
             if (!auth.IsConfigured)
                 return Results.BadRequest(new ApiResult(false, new Msg(
                     "请先在设置页填写 YouTube 的 Client ID 与 Client Secret。",

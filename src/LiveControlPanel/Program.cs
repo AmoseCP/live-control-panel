@@ -26,6 +26,9 @@ public static class Program
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Information()
             .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+            // HttpClient logs full request URLs at Information, and the Telegram Bot API carries
+            // its token in the URL — that must not sit in a plaintext log for 31 days.
+            .MinimumLevel.Override("System.Net.Http.HttpClient", Serilog.Events.LogEventLevel.Warning)
             .WriteTo.File(
                 Path.Combine(paths.LogDirectory, "panel-.log"),
                 rollingInterval: RollingInterval.Day,

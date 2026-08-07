@@ -429,6 +429,23 @@ public sealed class EndpointTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// Rebinding the channel authorization is a settings-class action: with the access code alone,
+    /// anyone who scanned the QR could hand the panel their own Google account. The PIN travels as
+    /// ?pin= here because /auth/start is a top-level navigation and cannot carry a header.
+    /// </summary>
+    [Fact]
+    public async Task Auth_start_needs_the_pin_and_accepts_it_as_a_query_parameter()
+    {
+        var withoutPin = await _client.GetAsync($"/auth/start?k={_code}");
+        Assert.Equal(HttpStatusCode.Forbidden, withoutPin.StatusCode);
+
+        // With the PIN it passes the gate; the YouTube client is unconfigured in tests, so the
+        // endpoint's own validation answers 400 — anything but the gate's 403.
+        var withPin = await _client.GetAsync($"/auth/start?k={_code}&pin={_pin}");
+        Assert.Equal(HttpStatusCode.BadRequest, withPin.StatusCode);
+    }
+
+    /// <summary>
     /// Both gates answer 403, so the body has to say which one refused. Without this the settings page
     /// reported "wrong PIN" for a stale access code — sending the operator to fix the wrong thing, and
     /// discarding a PIN that was actually correct.
@@ -645,7 +662,7 @@ public sealed class EndpointTests : IAsyncLifetime
     [Fact]
     public async Task Auth_start_explains_itself_when_no_oauth_client_is_configured()
     {
-        var response = await _client.GetAsync($"/auth/start?k={_code}");
+        var response = await _client.GetAsync($"/auth/start?k={_code}&pin={_pin}");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<ApiResult>();

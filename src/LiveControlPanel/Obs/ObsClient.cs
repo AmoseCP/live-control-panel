@@ -471,7 +471,18 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
             return;
         }
 
-        StatusChanged?.Invoke(status);
+        try
+        {
+            StatusChanged?.Invoke(status);
+        }
+        catch (Exception ex)
+        {
+            // Subscriber code must never take down the caller. The disconnect publish runs in the
+            // connect loop's finally — an exception escaping there is not caught by the loop's own
+            // handlers and would fault the fire-and-forget connect task, silently ending OBS
+            // reconnection for the rest of the process lifetime.
+            _log.LogError(ex, "An OBS StatusChanged subscriber threw");
+        }
     }
 
     /// <summary>

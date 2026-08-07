@@ -16,6 +16,7 @@ public sealed class AccessGate
     public const string CodeHeader = "X-Access-Code";
     public const string PinHeader = "X-Settings-Pin";
     public const string CodeQuery = "k";
+    public const string PinQuery = "pin";
     public const string CodeCookie = "lcp_k";
 
     private readonly ConfigStore _config;
@@ -27,6 +28,13 @@ public sealed class AccessGate
     public bool IsValidPin(HttpContext context)
     {
         var pin = context.Request.Headers[PinHeader].FirstOrDefault();
+
+        // Query fallback for endpoints reached by top-level navigation (the OAuth start redirect),
+        // which cannot carry a header. The PIN guards against mis-edits, not attackers (FR 6.5),
+        // so its appearing in a LAN URL is an accepted trade.
+        if (string.IsNullOrEmpty(pin) && context.Request.Query.TryGetValue(PinQuery, out var query))
+            pin = query.ToString();
+
         return Matches(pin, _config.Settings.SettingsPin);
     }
 
