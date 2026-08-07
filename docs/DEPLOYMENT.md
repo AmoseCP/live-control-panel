@@ -73,9 +73,13 @@
 
 正常安装即可。装好后打开一次、登录/激活,确保能进入全屏放映。
 
-### 3.3 获得面板 exe
+### 3.3 获得面板 exe(两种方式二选一)
 
-新电脑**不需要安装 .NET**——发布出来的是自包含单文件。在**开发机**上执行:
+无论哪种方式,产物都是同一个**自包含单文件 exe**——运行它的电脑不需要安装 .NET,网页文件已嵌入,不需要旁边放任何其它文件。
+
+#### 方式 A:在开发机上构建,拷贝 exe 过去
+
+新电脑上什么都不用装。在**开发机**上执行:
 
 ```powershell
 cd <仓库目录>\live-control-panel
@@ -88,9 +92,33 @@ dotnet publish src/LiveControlPanel -c Release
 src\LiveControlPanel\bin\Release\net8.0-windows\win-x64\publish\LiveControlPanel.exe
 ```
 
-把这**一个文件**拷到新电脑的 `C:\LiveControlPanel\` 目录(自己新建这个目录)。网页文件已嵌入 exe,不需要拷任何其它东西。
+把这**一个文件**用 U 盘或网络拷到新电脑的 `C:\LiveControlPanel\` 目录(自己新建这个目录)。
 
-> 如果没有现成的开发机:在新电脑装 [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) 和 Git,`git clone` 本仓库后执行上面同样的命令。装 SDK 只是为了构建,构建完可以卸载。
+以后更新面板:开发机上重新 publish,再拷一次 exe(先结束新机上正在运行的面板)。
+
+#### 方式 B:在新机上直接构建(新机装有 .NET 8 SDK 时)
+
+新电脑需要先安装 [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)(注意是 **SDK**,不是 Runtime——用 `dotnet --list-sdks` 有输出即对)和 [Git](https://git-scm.com)(或改从 GitHub 网页下载 ZIP 解压,则不需要 Git)。
+
+> ⚠️ **先确认开发机上的代码已全部 `git push`**——clone 拿到的是 GitHub 上的版本,开发机上没推送的修复不会包含在内。
+
+在**新电脑**上执行:
+
+```powershell
+git clone https://github.com/AmoseCP/live-control-panel.git
+cd live-control-panel
+
+dotnet test          # 可选但建议:全部测试通过说明构建环境正常
+
+dotnet publish src/LiveControlPanel -c Release
+
+New-Item -ItemType Directory -Force C:\LiveControlPanel
+Copy-Item src\LiveControlPanel\bin\Release\net8.0-windows\win-x64\publish\LiveControlPanel.exe C:\LiveControlPanel\
+```
+
+以后更新面板:新机上进入仓库目录执行 `git pull`,再重复 publish 和 Copy-Item 两步(先结束正在运行的面板:`Stop-Process -Name LiveControlPanel -Force`)。
+
+> 不要直接用 `dotnet run` 长期运行面板——它跑的是 Debug 构建且依赖源码目录。日常运行一律用 `C:\LiveControlPanel\LiveControlPanel.exe`,配合第 6 节的计划任务。
 
 **✅ 验收:** `C:\LiveControlPanel\LiveControlPanel.exe` 存在;OBS 能打开。
 
