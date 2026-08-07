@@ -148,6 +148,13 @@ Copy-Item src\LiveControlPanel\bin\Release\net8.0-windows\win-x64\publish\LiveCo
 
 > 备选:Win+R 运行 `netplwiz`,取消勾选 "Users must enter a user name and password"。Windows 11 上若看不到该勾选项,先把 `Settings → Accounts → Sign-in options → "For improved security…"` 关掉。
 
+**⚠️ 双账号机器必读(管理员和操作员是两个账号时)**
+
+不少机器上「日常操作账号」(下文代称 `Chapel`,普通用户)和「管理员账号」(代称 `CC`)是分开的。这种机器上必须遵守两条铁律:
+
+1. **一切「随登录启动」的配置都对齐到操作账号 Chapel**:Autologon 填 Chapel、面板计划任务的触发器和运行身份都绑 Chapel(见 6.1)、OBS 启动项放 Chapel 的启动文件夹(见 6.2)、OBS 的全部配置在 Chapel 登录时完成(OBS 的场景/密码/推流密钥按用户隔离存放在各自的 `%APPDATA%\obs-studio`,CC 下配好的东西 Chapel 看不到)。
+2. **提权窗口的身份不是桌面账号。** 在 Chapel 的桌面上「以管理员身份运行」PowerShell,弹出的 UAC 输的是 CC 的密码,于是该窗口里 `whoami` 显示的是 **CC**。凡是文档里出现 `<操作账号>` 占位符的地方,一律手工填 `Chapel` 这样的真实操作账号名,**不要**在提权窗口里用 `whoami`/`$env:USERNAME` 去取——取到的会是管理员。
+
 ### 4.4 防火墙放行 5088(iPad 能否访问就看这条)
 
 以**管理员**打开 PowerShell,执行:
@@ -176,7 +183,13 @@ netsh interface ipv4 show excludedportrange protocol=tcp
 
 ## 5. 面板首次启动
 
-1. 双击 `C:\LiveControlPanel\LiveControlPanel.exe`。**窗口没有任何输出是正常的**——所有日志都写到文件里。
+> ⚠️ 首次启动请在**操作账号的普通会话**里双击运行,不要从「以管理员身份运行」的窗口里启动——首启会创建 `C:\ProgramData\LiveControlPanel\` 下的全部文件,谁创建归谁,从提权窗口启动的话文件归管理员账号,之后操作账号会**存不了设置、写不了日志**。已经踩了这个坑的,以管理员执行一次授权即可修复:
+>
+> ```powershell
+> icacls "C:\ProgramData\LiveControlPanel" /grant "Users:(OI)(CI)M" /T
+> ```
+
+1. 双击 `C:\LiveControlPanel\LiveControlPanel.exe`。**不会弹出任何窗口,这是正常的**——它是后台程序,所有日志都写到文件里。确认它在跑:任务管理器里找 `LiveControlPanel.exe`,或直接做下一步(日志有新内容 = 在跑)。
 2. 打开今天的日志(日期换成当天):
 
    ```
@@ -204,36 +217,67 @@ netsh interface ipv4 show excludedportrange protocol=tcp
 
 ### 6.1 面板:计划任务(不要装成 Windows 服务!)
 
-以**管理员**打开 PowerShell,把 `<操作账号>` 换成实际登录用户名后整段执行:
+以**管理员**打开 PowerShell,把两处 `<操作账号>` 都换成实际的**日常操作账号名**(双账号机器上是 Chapel 那种普通账号;不要用 `whoami` 取——提权窗口里它是管理员,见 4.3 的警告),然后整段执行:
 
 ```powershell
-$action  = New-ScheduledTaskAction -Execute "C:\LiveControlPanel\LiveControlPanel.exe"
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:COMPUTERNAME\<操作账号>"
-$set     = New-ScheduledTaskSettingsSet -RestartCount 999 `
-             -RestartInterval (New-TimeSpan -Minutes 1) `
-             -ExecutionTimeLimit ([TimeSpan]::Zero) `
-             -MultipleInstances IgnoreNew
+$action    = New-ScheduledTaskAction -Execute "C:\LiveControlPanel\LiveControlPanel.exe"
+$trigger   = New-ScheduledTaskTrigger -AtLogOn -User "$env:COMPUTERNAME\<操作账号>"
+$principal = New-ScheduledTaskPrincipal -UserId "$env:COMPUTERNAME\<操作账号>" `
+               -LogonType Interactive -RunLevel Highest
+$set       = New-ScheduledTaskSettingsSet -RestartCount 999 `
+               -RestartInterval (New-TimeSpan -Minutes 1) `
+               -ExecutionTimeLimit ([TimeSpan]::Zero) `
+               -MultipleInstances IgnoreNew
 Register-ScheduledTask -TaskName LiveControlPanel `
-  -Action $action -Trigger $trigger -Settings $set -RunLevel Highest
+  -Action $action -Trigger $trigger -Principal $principal -Settings $set
 ```
 
 这段配置的含义:
 
 | 参数 | 作用 |
 | --- | --- |
-| `-AtLogOn` | 用户登录桌面时启动(配合 4.3 自动登录 = 开机即启动) |
+| `-AtLogOn -User <操作账号>` | **该账号**登录桌面时触发(配合 4.3 自动登录 = 开机即启动) |
+| `-Principal … -LogonType Interactive` | **以该账号的交互会话身份运行**。不显式指定时默认是「注册任务的人」——在提权窗口里注册就是管理员账号,会造成"Chapel 登录时以 CC 身份运行",而 CC 没有会话,任务永远起不来 |
 | `-RestartCount 999` + `-RestartInterval 1分钟` | 面板崩溃后 1 分钟内自动重启,几乎无限次 |
 | `-ExecutionTimeLimit Zero` | 不限运行时长(默认 72 小时会被强杀,必须清零) |
 | `-MultipleInstances IgnoreNew` | 已在运行时不重复启动第二份 |
-| `-RunLevel Highest` | 以最高权限运行 |
+| `-RunLevel Highest` | 以该账号的最高可用权限运行 |
+
+**注册后立即验证(不用等重启):**
+
+```powershell
+# 触发器和运行身份都必须是操作账号
+(Get-ScheduledTask -TaskName LiveControlPanel).Triggers  | Format-List UserId
+(Get-ScheduledTask -TaskName LiveControlPanel).Principal | Format-List UserId, LogonType
+
+# 手动触发一次,进程应当出现
+Start-ScheduledTask -TaskName LiveControlPanel
+Get-Process LiveControlPanel
+```
+
+> 判读:`Get-ScheduledTaskInfo -TaskName LiveControlPanel` 若显示 `LastRunTime: 11/30/1999` 且 `LastTaskResult: 267011`,意思是**该任务从未被触发过**——几乎总是触发器或 Principal 绑错了账号,按上面重建。
 
 **为什么不装 Windows 服务:** 服务运行在会话 0,窗口句柄和 COM 对象表按会话隔离,从会话 0 永远找不到 WPS 的放映窗口——翻页、页码、下一页预览会**全部静默失效**,且 OBS/YouTube 一切正常,极难排查。面板启动时会自检:若日志出现 `Running in session 0` 警告,说明装错了。
 
-### 6.2 OBS:启动文件夹快捷方式
+### 6.2 OBS:启动文件夹快捷方式(要比面板晚 20 秒)
 
-1. 右键 `C:\Program Files\obs-studio\bin\64bit\obs64.exe` → **Show more options → Create shortcut**(放桌面)。
-2. 右键该快捷方式 → **Properties**,在 **Start in** 填 `C:\Program Files\obs-studio\bin\64bit`(否则 OBS 报找不到 locale)。
-3. Win+R 运行 `shell:startup` 回车,把快捷方式**移动**进打开的文件夹。
+**必须以操作账号登录时操作**——`shell:startup` 指向的是**当前用户**的启动文件夹,在管理员账号下放的快捷方式对操作账号无效。
+
+直接放 obs64.exe 的快捷方式有一个时序缺陷:OBS 里的浏览器停靠面板(7.6 节)加载失败后**不会自动重试**,如果 OBS 抢在面板监听端口之前启动,dock 会一直停在 "Couldn't load that page!" 上。所以让 OBS 延迟 20 秒启动:
+
+1. 新建文件 `C:\LiveControlPanel\start-obs.bat`,内容:
+
+   ```bat
+   @echo off
+   timeout /t 20 /nobreak >nul
+   cd /d "C:\Program Files\obs-studio\bin\64bit"
+   start "" obs64.exe
+   ```
+
+2. 右键这个 bat → **Show more options → Create shortcut**;右键快捷方式 → **Properties → Run: Minimized**(倒计时窗口最小化,不闪黑框)。
+3. Win+R 运行 `shell:startup` 回车,把**快捷方式**移动进打开的文件夹(bat 本体留在原处)。
+
+> 就算偶尔仍然撞上(面板那次启动特别慢),应急动作是:在 dock 的错误页里**右键 → Refresh**。
 
 ### 6.3 验证整条链
 
@@ -343,7 +387,10 @@ Register-ScheduledTask -TaskName LiveControlPanel `
 1. 设置页粘贴 Client ID 和 Client Secret
 2. **先点「保存」**(不保存直接授权会报"请先填写 Client ID")
 3. 再点**「开始授权 / 重新授权」**→ 跳到 Google → **用教会频道的 Google 账号**登录并同意 → 看到「授权成功」页即完成
-4. 授权必须**在这台电脑的浏览器**里完成(回调地址是 localhost),不能在 iPad 上做
+4. 授权必须**在这台电脑的普通浏览器(Edge/Chrome)**里完成:回调地址是 localhost,所以不能在 iPad 上做;也**不要在 OBS 的停靠面板里做**——授权是整页跳转,dock 会停在「授权成功」页上像是面板消失了(恢复:Docks → Custom Browser Docks → Apply 重载)
+5. 授权成功后回主页点一次「刷新自检」——授权状态后台每 30 分钟才自动核对,不刷新的话页面可能暂时还显示未授权
+
+> 另外注意不要混淆:OBS 在绑定 Google 账号时会出现一个自带的 **"YouTube Live Control Panel"** 停靠面板——那是 OBS 的内置功能,与本面板无关。本方案要求 OBS 用 **Use Stream Key** 模式(7.5 节),**不要**用 Connect Account;若已绑定,在 Settings → Stream 里 Disconnect,那个同名 dock 会随之消失。
 
 ### 8.3 创建可复用推流密钥
 
@@ -444,6 +491,9 @@ C:\ProgramData\LiveControlPanel\thumbnails\default.jpg
 | **访问码/PIN 忘了** | 看 `C:\ProgramData\LiveControlPanel\settings.json` |
 | **启动即退出,日志提示端口** | 端口被占或被保留:按 4.5 检查,改 `settings.json` 的 `port` 后重启面板 |
 | **「OBS 未连接」** | ① OBS 开着吗 ② **Tools → WebSocket Server Settings 勾了 Enable 吗**(最常见) ③ 面板设置页密码和 OBS 里一致吗 |
+| **OBS 停靠面板显示 "Couldn't load that page!"** | OBS 比面板先启动,dock 加载失败后不自动重试:dock 错误页里**右键 → Refresh** 立刻恢复;根治按 6.2 让 OBS 延迟 20 秒启动。dock 的 URL 记得用**本机**的访问码 |
+| **开机后面板没自动启动(任务 `LastRunTime: 11/30/1999`,结果 `267011`)** | 计划任务从未被触发:触发器或运行身份(Principal)绑错了账号——常见于双账号机器在提权窗口注册任务。按 6.1 的脚本(含 `-Principal`)删除重建并验证 |
+| **面板保存设置失败 / 日志不更新** | `C:\ProgramData\LiveControlPanel` 的文件归属管理员账号(曾从提权窗口启动过面板)。执行第 5 节的 `icacls` 授权命令 |
 | **「声音没有电平」** | 调音台开机了吗 → USB 插好了吗 → 通道推子推起来了吗 → 对麦讲话再看 |
 | **「画面没有图像」** | 摄像机开机 → HDMI 在采集卡 HDMI IN → 换线试 |
 | **「上一场未结束」** | 点提示里的「结束上一场直播」一键清理 |

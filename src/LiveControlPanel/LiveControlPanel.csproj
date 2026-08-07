@@ -6,7 +6,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>LiveControlPanel</RootNamespace>
     <AssemblyName>LiveControlPanel</AssemblyName>
-    <OutputType>Exe</OutputType>
+    <!--
+      WinExe, not Exe: nothing is ever written to a console (Serilog is file-only by design), so
+      the only thing a console window did was flash a black box at every logon. Stop the panel
+      with Stop-Process or the scheduled task; there is no Ctrl+C to lose.
+    -->
+    <OutputType>WinExe</OutputType>
     <!--
       Must stay false. Late-bound COM access to the presentation program passes
       CultureInfo.CurrentCulture's LCID to IDispatch::GetIDsOfNames; under invariant globalization
