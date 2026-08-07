@@ -180,6 +180,27 @@ public class PreflightTests
 
     // ---------------------------------------------------------------- previousBroadcast (highest risk)
 
+    /// <summary>
+    /// A channel with years of leftovers can hold dozens of unfinished broadcasts; the warning
+    /// names a few and counts the rest instead of pasting a wall of titles into the UI.
+    /// </summary>
+    [Fact]
+    public async Task Many_unfinished_broadcasts_are_summarized_not_enumerated()
+    {
+        using var host = new TestHost();
+        host.YouTube.Unfinished = Enumerable.Range(1, 20)
+            .Select(i => new BroadcastInfo($"id{i}", $"Service {i}", "ready", $"https://www.youtube.com/live/id{i}"))
+            .ToList();
+
+        var item = Item(await host.Preflight.RunAsync(), "previousBroadcast");
+
+        Assert.False(item.Ok);
+        Assert.Contains("Service 1", item.Message.Zh);
+        Assert.DoesNotContain("Service 4", item.Message.Zh);   // beyond the named few
+        Assert.Contains("等 20 场", item.Message.Zh);
+        Assert.Contains("17 more", item.Message.En);
+    }
+
     [Fact]
     public async Task Previous_broadcast_check_passes_when_nothing_is_unfinished()
     {

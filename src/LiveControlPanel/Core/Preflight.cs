@@ -152,8 +152,17 @@ public sealed class Preflight
             if (unfinished.Count == 0)
                 return Ok("previousBroadcast", ("没有未结束的直播。", "No unfinished broadcasts."));
 
-            var zhTitles = string.Join("、", unfinished.Select(b => $"「{b.Title}」"));
-            var enTitles = string.Join(", ", unfinished.Select(b => $"\"{b.Title}\""));
+            // Name a few, count the rest. A channel with years of manual streaming can hold dozens
+            // of leftovers — enumerating every title turned this warning into a wall of text, and
+            // the one-click fix ends them all regardless of how many are named.
+            const int named = 3;
+            var zhTitles = string.Join("、", unfinished.Take(named).Select(b => $"「{b.Title}」"));
+            var enTitles = string.Join(", ", unfinished.Take(named).Select(b => $"\"{b.Title}\""));
+            if (unfinished.Count > named)
+            {
+                zhTitles += $" 等 {unfinished.Count} 场";
+                enTitles += $" and {unfinished.Count - named} more";
+            }
 
             return new PreflightItem
             {
