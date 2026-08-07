@@ -56,11 +56,14 @@ public sealed class YouTubeClient : IYouTubeClient, IDisposable
             },
         };
 
-        var created = await Retry.TransientAsync(
-            token => service.LiveBroadcasts
-                .Insert(broadcast, Parts("snippet", "status", "contentDetails"))
-                .ExecuteAsync(token),
-            _log, ct).ConfigureAwait(false);
+        // No transient retry here, deliberately: insert is not idempotent, and the retryable
+        // failures (timeout, connection reset) are exactly the ones where the server may already
+        // have created the broadcast — an automatic retry then creates a duplicate. A failure
+        // surfaces as a failed step 1; the operator-level retry goes through the orchestrator,
+        // which first looks for an existing broadcast with today's title and adopts it.
+        var created = await service.LiveBroadcasts
+            .Insert(broadcast, Parts("snippet", "status", "contentDetails"))
+            .ExecuteAsync(ct).ConfigureAwait(false);
 
         _log.LogInformation("Created broadcast {Id} \"{Title}\"", created.Id, request.Title);
 
@@ -152,26 +155,36 @@ public sealed class YouTubeClient : IYouTubeClient, IDisposable
                      LiveBroadcastsResource.ListRequest.BroadcastStatusEnum.Upcoming,
                  })
         {
-            var response = await Retry.TransientAsync(token =>
+            // Paged: a channel with years of manual streaming can hold more leftovers than one
+            // page — anything beyond the first page used to be invisible and thus uncleanable.
+            string? pageToken = null;
+            do
             {
-                var list = service.LiveBroadcasts.List(Parts("id", "snippet", "status"));
-                list.BroadcastStatus = status;
-                list.MaxResults = 20;
-                return list.ExecuteAsync(token);
-            }, _log, ct).ConfigureAwait(false);
+                var token = pageToken;
+                var response = await Retry.TransientAsync(t =>
+                {
+                    var list = service.LiveBroadcasts.List(Parts("id", "snippet", "status"));
+                    list.BroadcastStatus = status;
+                    list.MaxResults = 50;
+                    list.PageToken = token;
+                    return list.ExecuteAsync(t);
+                }, _log, ct).ConfigureAwait(false);
 
-            foreach (var item in response.Items ?? new List<LiveBroadcast>())
-            {
-                var lifeCycle = item.Status?.LifeCycleStatus ?? "";
-                if (lifeCycle is "complete" or "revoked") continue;
-                if (results.Any(r => r.Id == item.Id)) continue;
+                foreach (var item in response.Items ?? new List<LiveBroadcast>())
+                {
+                    var lifeCycle = item.Status?.LifeCycleStatus ?? "";
+                    if (lifeCycle is "complete" or "revoked") continue;
+                    if (results.Any(r => r.Id == item.Id)) continue;
 
-                results.Add(new BroadcastInfo(
-                    item.Id,
-                    item.Snippet?.Title ?? item.Id,
-                    lifeCycle,
-                    IYouTubeClient.WatchUrl(item.Id)));
-            }
+                    results.Add(new BroadcastInfo(
+                        item.Id,
+                        item.Snippet?.Title ?? item.Id,
+                        lifeCycle,
+                        IYouTubeClient.WatchUrl(item.Id)));
+                }
+
+                pageToken = response.NextPageToken;
+            } while (!string.IsNullOrEmpty(pageToken));
         }
 
         return results;
@@ -193,9 +206,10 @@ public sealed class YouTubeClient : IYouTubeClient, IDisposable
             },
         };
 
-        var created = await Retry.TransientAsync(
-            token => service.LiveStreams.Insert(stream, Parts("snippet", "cdn")).ExecuteAsync(token),
-            _log, ct).ConfigureAwait(false);
+        // Not retried: insert is not idempotent (see CreateBroadcastAsync). This is a one-time
+        // admin action behind a button — the admin just clicks again on a clean failure.
+        var created = await service.LiveStreams.Insert(stream, Parts("snippet", "cdn"))
+            .ExecuteAsync(ct).ConfigureAwait(false);
 
         _log.LogInformation("Created reusable stream {Id}", created.Id);
 

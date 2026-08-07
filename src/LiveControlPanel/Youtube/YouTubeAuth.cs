@@ -74,6 +74,10 @@ public sealed class YouTubeAuth
                 "Google did not return a refresh token. Revoke the app's access and authorize again.");
         }
 
+        // Stamp the moment of explicit authorization. The countdown must not use the token file's
+        // write time — hourly token refreshes rewrite that file and would reset it forever.
+        _store.MarkAuthorized(DateTime.UtcNow);
+
         lock (_gate) _credential = null;
         _log.LogInformation("YouTube authorization stored");
     }

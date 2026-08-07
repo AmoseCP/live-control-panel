@@ -54,6 +54,13 @@ public sealed class BroadcastState
 
     /// <summary>Orchestration bookkeeping — the basis for idempotency (FR 4.2).</summary>
     public bool ThumbnailUploaded { get; set; }
+
+    /// <summary>
+    /// When the panel created this broadcast, by the panel's clock. The day rollover retires
+    /// yesterday's work by this date — Today cannot serve that purpose because the auto-matched
+    /// Today empties itself as soon as the match window lapses, hours before midnight.
+    /// </summary>
+    public DateTime CreatedOn { get; set; }
 }
 
 public sealed class ObsState

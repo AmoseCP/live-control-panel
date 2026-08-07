@@ -372,6 +372,65 @@ public class OrchestratorTests
     }
 
     /// <summary>
+    /// A channel with years of leftovers can have entries in the unfinished list that are already
+    /// gone by the time they are deleted (removed in Studio, or stale in the listing). YouTube
+    /// answers 404 for those; aborting the whole batch on it left every broadcast after the dead one
+    /// uncleaned, and re-clicking just hit the next 404 — the cleanup could never finish.
+    /// </summary>
+    [Fact]
+    public async Task End_previous_skips_broadcasts_already_gone_instead_of_aborting_the_batch()
+    {
+        using var host = new TestHost();
+        host.YouTube.Unfinished = new List<BroadcastInfo>
+        {
+            new("gone1", "0729 Morning Service", "created", "https://www.youtube.com/live/gone1"),
+            new("old2", "8/4/2026 Morning Service", "ready", "https://www.youtube.com/live/old2"),
+            new("old3", "8/5/2026 Morning Service", "live", "https://www.youtube.com/live/old3"),
+        };
+        host.YouTube.FailOnce[nameof(FakeYouTubeClient.DeleteBroadcastAsync)] =
+            new Google.GoogleApiException("youtube", "Live broadcast not found")
+            {
+                HttpStatusCode = System.Net.HttpStatusCode.NotFound,
+            };
+
+        var outcome = await host.Orchestrator.EndPreviousAsync();
+
+        Assert.True(outcome.Ok);
+        Assert.Equal(new[] { "old2" }, host.YouTube.DeletedIds);
+        Assert.Equal(new[] { "old3" }, host.YouTube.TransitionedIds);
+        Assert.Contains("2", outcome.Message.Zh);
+    }
+
+    /// <summary>
+    /// An insert can succeed server-side while the response is lost to a timeout. The retry must
+    /// adopt the broadcast that already exists under today's title instead of creating a second
+    /// one — duplicate broadcasts pile up as "leftovers" and scare the next operator's pre-flight.
+    /// </summary>
+    [Fact]
+    public async Task Retrying_a_lost_create_adopts_the_existing_broadcast_instead_of_duplicating()
+    {
+        using var host = new TestHost();
+        host.SetToday();
+        host.YouTube.FailOnce[nameof(FakeYouTubeClient.CreateBroadcastAsync)] = new TaskCanceledException();
+
+        var first = await host.Orchestrator.StartTodayAsync();
+        Assert.False(first.Ok);
+        Assert.Equal(Orchestrator.StepCreate, first.FailedStep);
+
+        // The "lost" create actually landed on YouTube's side.
+        host.YouTube.Unfinished = new List<BroadcastInfo>
+        {
+            new("lost1", "8/5/2026 Wednesday Service", "created", "https://www.youtube.com/live/lost1"),
+        };
+
+        var second = await host.Orchestrator.StartTodayAsync();
+
+        Assert.True(second.Ok);
+        Assert.Equal(0, host.YouTube.CreateCalls);
+        Assert.Equal("lost1", host.State.Read(s => s.Broadcast!.Id));
+    }
+
+    /// <summary>
     /// The broadcast can end while step 6 waits — stopped from this panel in a race, or in YouTube
     /// Studio. Polling a finished broadcast for the remaining minute produced a "retry" that could
     /// never succeed; it must fail immediately with the real explanation.

@@ -107,21 +107,26 @@ public sealed class StateManager
         // Day rollover. The panel runs for weeks as a logon task, so yesterday's finished work must
         // retire on its own: Thursday's 04:40 operator has to meet a fresh, auto-matched Ready
         // screen, not Wednesday evening's "已结束" needing an extra tap (FR 6.1, zero training).
-        // A broadcast that is still live is never touched — only completed work and manual picks
-        // that were never started.
-        if (_state.Today?.ScheduledStart is { } scheduled && scheduled.Date < now.Date)
+        // Retirement is keyed to the broadcast's own creation date — the auto-matched Today empties
+        // itself when the match window lapses, hours before midnight, so a Today-based check would
+        // never fire for a scheduled service. This also retires a start that failed partway
+        // (created/bound) and was abandoned; the leftover on YouTube's side is the pre-flight's
+        // job to flag, but it must never be silently reused as the next day's broadcast.
+        // A broadcast that is on air — by its status or by OBS actually pushing — is never touched.
+        if (_state.Broadcast is { } broadcast && broadcast.CreatedOn.Date < now.Date
+            && broadcast.Status is not (BroadcastStatus.Live or BroadcastStatus.Testing)
+            && !_state.Obs.Streaming)
         {
-            if (_state.Broadcast?.Status == BroadcastStatus.Complete)
-            {
-                _state.Broadcast = null;
-                _state.Today = null;
-                _state.Steps = new List<StepState>();
-                _state.Telegram = new TelegramState();
-            }
-            else if (_state.Broadcast is null && _state.Today.Manual)
-            {
-                _state.Today = null;
-            }
+            _state.Broadcast = null;
+            _state.Today = null;
+            _state.Steps = new List<StepState>();
+            _state.Telegram = new TelegramState();
+        }
+        else if (_state.Today?.ScheduledStart is { } scheduled && scheduled.Date < now.Date
+            && _state.Broadcast is null && _state.Today.Manual)
+        {
+            // A manual pick that was never started (no broadcast to date it by).
+            _state.Today = null;
         }
 
         // An explicit choice outranks the calendar. The operator picked this service on purpose —

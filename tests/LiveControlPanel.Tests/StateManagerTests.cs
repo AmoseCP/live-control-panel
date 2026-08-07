@@ -218,6 +218,55 @@ public class StateManagerTests
         Assert.NotNull(state.NextService);
     }
 
+    /// <summary>
+    /// The everyday path: an AUTO-matched service, no manual pick. The match window lapses hours
+    /// before midnight and empties Today, so the rollover must key off the broadcast itself —
+    /// keying off Today made the rollover dead code for every scheduled service.
+    /// </summary>
+    [Fact]
+    public async Task An_auto_matched_service_retires_overnight_even_though_its_window_lapsed_first()
+    {
+        using var host = new TestHost();
+        host.State.Clock = () => new DateTime(2026, 8, 5, 18, 30, 0);  // Wednesday, inside 17:00–20:00
+        Assert.Equal("8/5/2026 Wednesday Service", host.State.Snapshot().Today!.Title);
+
+        await host.Orchestrator.StartTodayAsync();
+        await host.Orchestrator.StopAsync();
+
+        // 21:00: the window has lapsed and Today empties, but tonight's finished work must still
+        // show as Ended — retiring it before midnight would hide the watch link too early.
+        host.State.Clock = () => new DateTime(2026, 8, 5, 21, 0, 0);
+        Assert.Equal(Phase.Ended, host.State.Snapshot().Phase);
+
+        // Thursday 04:00 — inside the morning window (03:40–06:40). Yesterday must be gone.
+        host.State.Clock = () => new DateTime(2026, 8, 6, 4, 0, 0);
+        var state = host.State.Snapshot();
+        Assert.Equal(Phase.Ready, state.Phase);
+        Assert.Null(state.Broadcast);
+        Assert.Equal("8/6/2026 Morning Service", state.Today!.Title);
+    }
+
+    /// <summary>
+    /// A start that failed partway (created, never bound) and was abandoned must not survive into
+    /// the next day: with the stale broadcast still in state, the next morning's start would skip
+    /// creation and bind YESTERDAY's broadcast — going live under yesterday's unchangeable title.
+    /// </summary>
+    [Fact]
+    public async Task An_abandoned_partial_start_is_not_reused_the_next_day()
+    {
+        using var host = new TestHost();
+        host.SetToday();
+        host.YouTube.FailOnce[nameof(FakeYouTubeClient.BindStreamAsync)] = new TimeoutException();
+
+        var outcome = await host.Orchestrator.StartTodayAsync();
+        Assert.False(outcome.Ok);
+        Assert.Equal(BroadcastStatus.Created, host.State.Read(s => s.Broadcast!.Status));
+
+        host.State.Clock = () => new DateTime(2026, 8, 6, 12, 0, 0);   // Thursday noon
+
+        Assert.Null(host.State.Snapshot().Broadcast);
+    }
+
     /// <summary>A stream still on air is never retired by the calendar, whatever the clock says.</summary>
     [Fact]
     public async Task A_live_broadcast_is_never_retired_by_the_clock()

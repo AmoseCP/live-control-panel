@@ -151,6 +151,36 @@ public sealed class Orchestrator
         var existing = _state.Read(s => s.Broadcast);
         if (existing?.Id is not null) return new StepMessage(new Msg($"已存在直播 {existing.Id}", $"Broadcast {existing.Id} already exists"), Skipped: true);
 
+        // Second anchor, on YouTube's side: if a previous attempt's insert succeeded but the
+        // response was lost (timeout mid-create), the local state is empty while the broadcast
+        // exists. Titles carry the date, so an unfinished broadcast with today's exact title is
+        // that lost attempt — adopt it instead of creating a duplicate.
+        try
+        {
+            var leftover = (await _youtube.ListUnfinishedBroadcastsAsync(ct).ConfigureAwait(false))
+                .FirstOrDefault(b => b.Title == today.Title);
+            if (leftover is not null)
+            {
+                _state.Mutate(s => s.Broadcast = new BroadcastState
+                {
+                    Id = leftover.Id,
+                    WatchUrl = leftover.WatchUrl,
+                    Status = BroadcastStatus.Created,
+                    Title = leftover.Title,
+                    CreatedOn = _state.Clock(),
+                });
+                _log.LogInformation("Adopted existing broadcast {Id} \"{Title}\" instead of creating a duplicate",
+                    leftover.Id, leftover.Title);
+                return new StepMessage(new Msg($"沿用已创建的 {leftover.Id}", $"Reusing existing {leftover.Id}"));
+            }
+        }
+        catch (Exception ex)
+        {
+            // The check is best-effort: if the listing itself fails, creating is still the right
+            // move — worst case is the duplicate the pre-flight already knows how to clean up.
+            _log.LogDebug(ex, "Checking for an existing broadcast before create failed");
+        }
+
         var settings = _config.Settings;
         var description = Coalesce(today.Description,
             Coalesce(template?.Description, settings.DefaultDescription));
@@ -174,6 +204,7 @@ public sealed class Orchestrator
             WatchUrl = info.WatchUrl,
             Status = BroadcastStatus.Created,
             Title = info.Title,
+            CreatedOn = _state.Clock(),
         });
 
         return new StepMessage(new Msg($"已创建 {info.Id}", $"Created {info.Id}"));
@@ -350,13 +381,24 @@ public sealed class Orchestrator
             {
                 if (broadcast.Id == current) continue;
 
-                // Only a broadcast that actually went on air can transition to complete. A leftover
-                // that never started (created/ready) gets invalidTransition from YouTube — but it
-                // still holds the shared stream key, so it is deleted instead.
-                if (broadcast.LifeCycleStatus is "live" or "testing" or "liveStarting")
-                    await _youtube.TransitionToCompleteAsync(broadcast.Id, ct).ConfigureAwait(false);
-                else
-                    await _youtube.DeleteBroadcastAsync(broadcast.Id, ct).ConfigureAwait(false);
+                try
+                {
+                    // Only a broadcast that actually went on air can transition to complete. A leftover
+                    // that never started (created/ready) gets invalidTransition from YouTube — but it
+                    // still holds the shared stream key, so it is deleted instead.
+                    if (broadcast.LifeCycleStatus is "live" or "testing" or "liveStarting")
+                        await _youtube.TransitionToCompleteAsync(broadcast.Id, ct).ConfigureAwait(false);
+                    else
+                        await _youtube.DeleteBroadcastAsync(broadcast.Id, ct).ConfigureAwait(false);
+                }
+                catch (Google.GoogleApiException api) when (api.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    // Already gone on YouTube's side (removed in Studio, or stale in the listing).
+                    // That is the outcome this loop exists to produce, so keep cleaning instead of
+                    // aborting the whole batch on it.
+                    _log.LogInformation("Broadcast {Id} was already gone; continuing cleanup", broadcast.Id);
+                    continue;
+                }
 
                 ended++;
             }
