@@ -274,11 +274,14 @@
 
   // Full page load, not fetch: this is a redirect to Google's consent screen.
   L.on('btn-authorize', function () {
-    location.href = '/auth/start?k=' + encodeURIComponent(L.code);
+    // The PIN travels as a query parameter: this is a top-level navigation (a redirect to
+    // Google's consent page), so the X-Settings-Pin header cannot be attached.
+    location.href = '/auth/start?k=' + encodeURIComponent(L.code) +
+      '&pin=' + encodeURIComponent(L.settingsPin());
   });
 
-  L.on('btn-revoke', function () {
-    if (!window.confirm(t('settings.confirmRevoke'))) return;
+  // Two-step arm instead of window.confirm — see L.armConfirm (OBS's browser dock has no dialogs).
+  L.armConfirm('btn-revoke', function () { return t('settings.confirmRevokeArm'); }, function () {
     L.api.post('/api/auth/revoke').then(function (result) {
       report(result);
       loadAuthStatus();
@@ -287,9 +290,7 @@
 
   /* ---- stream key -------------------------------------------------------- */
 
-  L.on('btn-create-key', function () {
-    if (!window.confirm(t('settings.confirmKey'))) return;
-
+  L.armConfirm('btn-create-key', function () { return t('settings.confirmKeyArm'); }, function () {
     L.api.post('/api/stream-key/create').then(function (result) {
       var data = result.data || {};
       report(result);

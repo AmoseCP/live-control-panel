@@ -62,6 +62,7 @@
     'live.stop': ['结束直播', 'End the broadcast'],
     'live.confirmStop': ['确定要结束这场直播吗？结束后无法继续。',
       'End this broadcast? It cannot be resumed.'],
+    'live.confirmStopArm': ['再点一次，确认结束直播', 'Tap again to end the broadcast'],
 
     /* ---- scenes / slides ---- */
     'scene.heading': ['切换画面', 'Switch scene'],
@@ -158,6 +159,7 @@
     'settings.authOkDays': ['授权有效，剩余约 {n} 天', 'Authorization valid, about {n} days left'],
     'settings.confirmRevoke': ['确定清除现有授权？清除后需要重新授权才能建播。',
       'Clear the existing authorization? A new one is needed before any broadcast can be created.'],
+    'settings.confirmRevokeArm': ['再点一次，确认清除授权', 'Tap again to clear the authorization'],
 
     'settings.keyHeading': ['推流密钥（一次性）', 'Stream key (one-time)'],
     'settings.keyHint': ['创建一次即可长期使用，此后每场直播只做绑定，OBS 里不必再改。',
@@ -169,6 +171,7 @@
     'settings.keyCopy': ['复制串流密钥', 'Copy the stream key'],
     'settings.confirmKey': ['创建一个新的可复用推流密钥？创建后需要把密钥填进 OBS。',
       'Create a new reusable stream key? It will need entering in OBS.'],
+    'settings.confirmKeyArm': ['再点一次，确认创建新密钥', 'Tap again to create a new key'],
 
     'settings.telegramHeading': ['Telegram', 'Telegram'],
     'settings.telegramToken': ['Bot Token', 'Bot token'],

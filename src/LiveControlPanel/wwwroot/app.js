@@ -19,45 +19,79 @@
   var lastFailedStep = null;
   var socket = null;
   var reconnectDelay = 1000;
+  var reconnectTimer = null;
 
   /* ---- websocket --------------------------------------------------------
    * FR 6.4: an iPad that has been asleep for ten minutes must recover on its own.
    * Reconnect on close, on error, and on regaining visibility.
+   *
+   * Invariant: at most one live socket and one pending reconnect timer. connect() always tears
+   * down whatever came before it — a wake-up reconnect racing a backoff reconnect used to stack
+   * parallel sockets, each one's onclose flapping the offline banner and spawning more.
    */
   function connect() {
     var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = protocol + '//' + location.host + '/ws?k=' + encodeURIComponent(L.code);
 
+    if (reconnectTimer !== null) { window.clearTimeout(reconnectTimer); reconnectTimer = null; }
+    if (socket) {
+      var old = socket;
+      socket = null;
+      old.onopen = old.onmessage = old.onclose = old.onerror = null;
+      try { old.close(); } catch (e) { /* already dead */ }
+    }
+
+    var ws;
     try {
-      socket = new WebSocket(url);
+      ws = new WebSocket(url);
     } catch (e) {
       scheduleReconnect();
       return;
     }
+    socket = ws;
 
-    socket.onopen = function () {
+    ws.onopen = function () {
+      if (socket !== ws) return;
       reconnectDelay = 1000;
       L.show('offline', false);
       refreshPreflight();
     };
 
-    socket.onmessage = function (event) {
-      try { render(JSON.parse(event.data)); } catch (e) { /* ignore malformed frame */ }
+    ws.onmessage = function (event) {
+      if (socket !== ws) return;
+      // Parse inside the guard, render outside it: a crash in render() is a bug to surface on
+      // the next frame, not a "malformed frame" to swallow forever.
+      var next = null;
+      try { next = JSON.parse(event.data); } catch (e) { /* genuinely malformed frame */ }
+      if (next) render(next);
     };
 
-    socket.onclose = function () { L.show('offline', true); scheduleReconnect(); };
-    socket.onerror = function () { L.show('offline', true); };
+    ws.onclose = function () {
+      if (socket !== ws) return;
+      L.show('offline', true);
+      scheduleReconnect();
+    };
+    ws.onerror = function () {
+      if (socket !== ws) return;
+      L.show('offline', true);
+    };
   }
 
   function scheduleReconnect() {
-    window.setTimeout(function () {
+    if (reconnectTimer !== null) return;
+    reconnectTimer = window.setTimeout(function () {
+      reconnectTimer = null;
       reconnectDelay = Math.min(reconnectDelay * 2, 15000);
       connect();
     }, reconnectDelay);
   }
 
+  // Always reconnect on wake, not only when the socket admits it is closed: iOS suspends the
+  // TCP connection on sleep without a clean close, so after wake readyState still reads OPEN
+  // for minutes while nothing arrives — the panel would sit frozen on pre-sleep state with no
+  // offline banner. A fresh socket costs one round-trip; onopen repaints from live state.
   document.addEventListener('visibilitychange', function () {
-    if (!document.hidden && (!socket || socket.readyState > 1)) {
+    if (!document.hidden) {
       reconnectDelay = 1000;
       connect();
     }
@@ -455,8 +489,8 @@
   });
 
   // FR 4.3: a real confirmation in front of the only irreversible action on the page.
-  L.on('btn-stop', function () {
-    if (!window.confirm(t('live.confirmStop'))) return;
+  // In-page two-step arm, not window.confirm — see L.armConfirm for why (OBS dock).
+  L.armConfirm('btn-stop', function () { return t('live.confirmStopArm'); }, function () {
     L.api.post('/api/broadcast/stop', { confirm: true }).then(report);
   });
 

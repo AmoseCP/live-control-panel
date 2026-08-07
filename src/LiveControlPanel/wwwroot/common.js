@@ -133,6 +133,42 @@
     if (element) element.addEventListener('click', handler);
   }
 
+  /*
+   * Two-step confirm: the first tap arms the button (label swap + .armed style), a second tap
+   * within five seconds runs the action; doing nothing disarms it. window.confirm is not used
+   * anywhere in the panel — OBS's browser dock (CEF) renders no JavaScript dialogs, so there
+   * confirm() returns false silently and the button would be dead with no feedback.
+   * armedLabel is a function so the label follows a runtime language switch.
+   */
+  function armConfirm(id, armedLabel, action) {
+    var button = document.getElementById(id);
+    if (!button) return;
+
+    var armed = false;
+    var timer = null;
+    var original = null;
+
+    function disarm() {
+      armed = false;
+      if (timer) { window.clearTimeout(timer); timer = null; }
+      if (original !== null) { button.textContent = original; original = null; }
+      button.classList.remove('armed');
+    }
+
+    button.addEventListener('click', function () {
+      if (!armed) {
+        armed = true;
+        original = button.textContent;
+        button.textContent = armedLabel();
+        button.classList.add('armed');
+        timer = window.setTimeout(disarm, 5000);
+        return;
+      }
+      disarm();
+      action();
+    });
+  }
+
   function show(id, visible) {
     var element = document.getElementById(id);
     if (element) element.classList.toggle('hidden', !visible);
@@ -166,6 +202,7 @@
     toast: toast,
     copyText: copyText,
     on: on,
+    armConfirm: armConfirm,
     show: show,
     text: text,
     clockTime: clockTime,

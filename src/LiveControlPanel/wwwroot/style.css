@@ -129,6 +129,8 @@ button:disabled { opacity: 0.45; cursor: default; }
 
 button.primary { background: var(--accent); border-color: var(--accent); font-size: 1.125rem; min-height: 72px; }
 button.danger { background: var(--bad); border-color: var(--bad); }
+/* A two-step confirm button in its armed state: one more tap runs the action. */
+button.armed { background: var(--bad); border-color: var(--bad); outline: 3px solid var(--bad); outline-offset: 2px; }
 button.ghost { background: transparent; min-height: 48px; font-weight: 500; color: var(--action); }
 
 .row { display: flex; gap: 10px; }
