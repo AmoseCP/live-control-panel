@@ -259,33 +259,64 @@ Get-Process LiveControlPanel
 
 **为什么不装 Windows 服务:** 服务运行在会话 0,窗口句柄和 COM 对象表按会话隔离,从会话 0 永远找不到 WPS 的放映窗口——翻页、页码、下一页预览会**全部静默失效**,且 OBS/YouTube 一切正常,极难排查。面板启动时会自检:若日志出现 `Running in session 0` 警告,说明装错了。
 
-### 6.2 OBS:启动文件夹快捷方式(要比面板晚 20 秒)
+### 6.2 OBS 与面板窗口:延迟启动脚本(推荐形态:OBS 进托盘,面板开大窗口)
 
 **必须以操作账号登录时操作**——`shell:startup` 指向的是**当前用户**的启动文件夹,在管理员账号下放的快捷方式对操作账号无效。
 
-直接放 obs64.exe 的快捷方式有一个时序缺陷:OBS 里的浏览器停靠面板(7.6 节)加载失败后**不会自动重试**,如果 OBS 抢在面板监听端口之前启动,dock 会一直停在 "Couldn't load that page!" 上。所以让 OBS 延迟 20 秒启动:
+推荐的开机形态是:**OBS 启动后直接缩进系统托盘**(推流功能完全不受影响,界面不占屏幕),**控制面板以一个最大化的独立窗口自动弹出**——操作员开机看到的就是面板,而不是 OBS 一整套界面;需要 OBS 界面时点托盘图标,面板窗口也可随时最小化去做别的事。
 
-1. 新建文件 `C:\LiveControlPanel\start-obs.bat`,内容:
+**(a)先让 OBS 学会进托盘**:OBS 里 **Settings → General → System Tray**,勾选:
+- **Enable**
+- **Minimize to system tray when started**
+- 可选:**Always minimize to system tray instead of task bar**
 
-   ```bat
-   @echo off
-   timeout /t 20 /nobreak >nul
-   cd /d "C:\Program Files\obs-studio\bin\64bit"
-   start "" obs64.exe
-   ```
+**(b)创建启动脚本** `C:\LiveControlPanel\start-obs.bat`(访问码换成本机的):
 
-2. 右键这个 bat → **Show more options → Create shortcut**;右键快捷方式 → **Properties → Run: Minimized**(倒计时窗口最小化,不闪黑框)。
-3. Win+R 运行 `shell:startup` 回车,把**快捷方式**移动进打开的文件夹(bat 本体留在原处)。
+```bat
+@echo off
+rem -- 等面板服务就绪(避免 dock/页面加载失败) --
+timeout /t 20 /nobreak >nul
 
-> 就算偶尔仍然撞上(面板那次启动特别慢),应急动作是:在 dock 的错误页里**右键 → Refresh**。
+rem -- 启动 OBS,直接进托盘 --
+cd /d "C:\Program Files\obs-studio\bin\64bit"
+start "" obs64.exe --minimize-to-tray
+
+rem -- 等 OBS 初始化 --
+timeout /t 10 /nobreak >nul
+
+rem -- 面板以独立应用窗口打开(最大化,可最小化/切换) --
+start "" "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" ^
+  --app="http://localhost:5088/?k=<访问码>" --start-maximized
+```
+
+最后一行的窗口形态按需选择:
+
+| 写法 | 效果 |
+| --- | --- |
+| `--app="URL" --start-maximized` | **推荐**:独立窗口、无地址栏无标签页,像专用软件;可最小化、可 Alt+Tab,不妨碍在电脑上做别的事 |
+| `--new-window "URL" --start-maximized` | 普通浏览器窗口(带地址栏、标签页) |
+| `--kiosk "URL" --edge-kiosk-type=fullscreen --no-first-run` | 锁死全屏,操作员无法切走(Alt+F4 退出)。适合纯值班机,不适合还要兼作他用的电脑 |
+
+**(c)放进启动文件夹:**
+
+1. 右键这个 bat → **Show more options → Create shortcut**;右键快捷方式 → **Properties → Run: Minimized**(倒计时窗口最小化,不闪黑框)。
+2. Win+R 运行 `shell:startup` 回车,把**快捷方式**移动进打开的文件夹(bat 本体留在原处)。
+
+**为什么要延迟 20 秒:** OBS 里的浏览器停靠面板(7.6 节)和上面打开的面板窗口,加载失败后都**不会自动重试**——OBS/浏览器抢在面板监听端口之前启动,就会停在 "Couldn't load that page!" 上。就算偶尔仍然撞上(面板那次启动特别慢),应急动作是:dock 里**右键 → Refresh**,独立窗口按 **F5** 或关掉重开。
+
+**延迟是给"加载面板页面的东西"用的,OBS 本身不需要。** 两点裁量空间:
+
+- 秒数可按机器实际调小——面板服务通常一两秒就绑好端口,`timeout /t 5` 往往就够;20/10 秒是"保证不用人碰"的保守值。
+- 不想要任何延迟也完全可行:OBS 快捷方式直接放 `shell:startup`(要进托盘就在快捷方式 Target 末尾加 ` --minimize-to-tray`),代价只是 dock 偶尔开机后需要手动右键 → Refresh 一次。此时若仍想自动弹面板窗口,单独放一个只含 `timeout /t 5` + 打开 Edge 那两行的小 bat 即可。
 
 ### 6.3 验证整条链
 
-先手动结束现有进程(任务管理器结束 `LiveControlPanel.exe` 和 OBS),然后**重启电脑**,什么都不碰,等 2 分钟:
+先手动结束现有进程(任务管理器结束 `LiveControlPanel.exe` 和 OBS),然后**重启电脑**,什么都不碰,等 2 分钟。预期时间线:
 
-- 电脑自动进入桌面(4.3 生效)
-- OBS 自动打开(6.2 生效)
-- 浏览器打开 `http://localhost:5088/?k=<访问码>` 能访问(6.1 生效)
+- 电脑自动进入操作账号的桌面(4.3 生效)
+- 约 20 秒后 OBS 无声进入系统托盘——任务栏右下角有 OBS 图标(6.2 生效)
+- 约 30 秒时控制面板窗口自动最大化弹出,页面正常显示(6.1 + 6.2 生效)
+- `Get-Process LiveControlPanel` 能看到进程(普通 PowerShell 窗口执行即可)
 
 **✅ 验收:** 重启后不碰键盘,面板和 OBS 都自己起来了。
 
