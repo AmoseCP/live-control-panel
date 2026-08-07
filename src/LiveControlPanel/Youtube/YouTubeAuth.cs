@@ -52,9 +52,13 @@ public sealed class YouTubeAuth
     /// <summary>Google consent URL. offline + consent so a refresh token is always issued.</summary>
     public string BuildAuthorizationUrl(int port)
     {
-        var request = (AuthorizationCodeRequestUrl)Flow().CreateAuthorizationCodeRequest(RedirectUri(port));
-        var url = request.Build().AbsoluteUri;
-        return $"{url}&access_type=offline&prompt=consent";
+        // Set these via the request object, not by appending to the built URL: the flow already
+        // emits access_type=offline, and Google rejects any duplicated OAuth parameter outright
+        // ("OAuth 2 parameters can only have a single value").
+        var request = (GoogleAuthorizationCodeRequestUrl)Flow().CreateAuthorizationCodeRequest(RedirectUri(port));
+        request.AccessType = "offline";
+        request.Prompt = "consent";
+        return request.Build().AbsoluteUri;
     }
 
     public async Task ExchangeCodeAsync(string code, int port, CancellationToken ct)
