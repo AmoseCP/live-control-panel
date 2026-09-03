@@ -84,6 +84,20 @@ public sealed class SlidesState
     public int? Total { get; set; }
 }
 
+/// <summary>
+/// Whether the panel can re-enumerate the capture card, and when it last did.
+///
+/// The operator page keys the reset button on this, so a panel that never configured it shows
+/// nothing — and one that did shows the last attempt, because "did I already try that" is the first
+/// question at 04:40.
+/// </summary>
+public sealed class CaptureResetState
+{
+    public bool Enabled { get; set; }
+    public string? DeviceName { get; set; }
+    public DateTime? LastResetAt { get; set; }
+}
+
 public sealed class TelegramState
 {
     public DateTime? SentAt { get; set; }
@@ -136,6 +150,7 @@ public sealed class RuntimeState
     public ObsState Obs { get; set; } = new();
     public SlidesState Slides { get; set; } = new();
     public TelegramState Telegram { get; set; } = new();
+    public CaptureResetState CaptureReset { get; set; } = new();
     public List<PreflightItem> Preflight { get; set; } = new();
     public AuthState Auth { get; set; } = new();
     public List<StepState> Steps { get; set; } = new();

@@ -264,6 +264,15 @@
             refreshPreflight();
           });
         }));
+      } else if (item.action === 'reset-capture') {
+        body.appendChild(actionButton(t('preflight.resetCapture'), function (button) {
+          button.disabled = true;
+          L.api.post('/api/capture/reset').then(function (result) {
+            button.disabled = false;
+            report(result);
+            refreshPreflight();
+          });
+        }));
       } else if (item.action === 'reauthorize') {
         body.appendChild(actionButton(t('preflight.reauthorize'), function () {
           location.href = 'settings.html?k=' + encodeURIComponent(L.code);
@@ -422,6 +431,8 @@
       : auth.expiresInDays != null ? t('status.authValidDays', { n: auth.expiresInDays })
       : t('status.authValid'));
 
+    renderCaptureReset();
+
     // FR 8: seven people share this PC, so "who did what, when" has to be on screen.
     if (state.lastAction) {
       var service = state.lastAction.service
@@ -429,6 +440,24 @@
         : '';
       L.text('last-action', t('status.lastAction') + L.clockTime(state.lastAction.at) + ' ' +
         pick(state.lastAction.what) + service);
+    }
+  }
+
+  /*
+   * The capture-card reset. Hidden unless an administrator configured it, and it stays available in
+   * every phase on purpose: the card can wedge mid-sermon, when the pre-flight is nowhere on screen.
+   *
+   * "Already tried it at 04:41" is the first thing an operator needs to know before trying again,
+   * so the last attempt is shown next to the button rather than only in the action log.
+   */
+  function renderCaptureReset() {
+    var reset = state.captureReset || {};
+
+    L.show('btn-reset-capture', !!reset.enabled);
+    L.show('capture-reset-note', !!reset.enabled && !!reset.lastResetAt);
+
+    if (reset.enabled && reset.lastResetAt) {
+      L.text('capture-reset-note', t('status.captureResetAt', { time: L.clockTime(reset.lastResetAt) }));
     }
   }
 
@@ -512,6 +541,21 @@
       L.toast(pick(data.message) || t('generic.pageTurnFailed'), 'bad');
     }
   }
+
+  /*
+   * Two-step arm rather than a plain click: this switches a piece of hardware off and on, and a
+   * mis-tap during a service should not do that. Same pattern as "end the broadcast".
+   */
+  L.armConfirm('btn-reset-capture', function () { return t('status.resetCaptureArm'); }, function () {
+    var button = document.getElementById('btn-reset-capture');
+    if (button) button.disabled = true;
+
+    L.api.post('/api/capture/reset').then(function (result) {
+      if (button) button.disabled = false;
+      report(result);
+      refreshPreflight();
+    });
+  });
 
   L.on('btn-refresh', refreshPreflight);
 

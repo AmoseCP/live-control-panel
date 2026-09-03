@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using LiveControlPanel.Api;
 using LiveControlPanel.Config;
 using LiveControlPanel.Core;
+using LiveControlPanel.Devices;
 using LiveControlPanel.Net;
 using LiveControlPanel.Notify;
 using LiveControlPanel.Obs;
@@ -57,6 +58,8 @@ public sealed class EndpointTests : IAsyncLifetime
         builder.Services.AddSingleton<IYouTubeClient>(_fixtures.YouTube);
         builder.Services.AddSingleton<IObsClient>(_fixtures.Obs);
         builder.Services.AddSingleton<ITelegramClient>(_fixtures.Telegram);
+        builder.Services.AddSingleton<IDeviceResetter>(_fixtures.Devices);
+        builder.Services.AddSingleton(_fixtures.CaptureRecovery);
         builder.Services.AddSingleton(_fixtures.Preflight);
         builder.Services.AddSingleton(_fixtures.Orchestrator);
         builder.Services.AddSingleton(_fixtures.Notifications);
@@ -102,6 +105,7 @@ public sealed class EndpointTests : IAsyncLifetime
                      "/auth/start", "/auth/callback",
                      "/api/settings", "/api/templates",
                      "/api/stream-key/create",
+                     "/api/capture/reset", "/api/diag/usb-devices",
                      "/api/diag/windows",
                  })
         {
@@ -655,6 +659,66 @@ public sealed class EndpointTests : IAsyncLifetime
         };
         request.Headers.Add(AccessGate.PinHeader, _pin);
         return await _client.SendAsync(request);
+    }
+
+    // ---------------------------------------------------------------- capture-card recovery
+
+    /// <summary>
+    /// No PIN on the reset. It is a recovery an operator needs at 04:40, alone, from an iPad — and
+    /// the risk of misuse is contained elsewhere: the endpoint takes no device parameter, so it can
+    /// only act on the device an administrator already chose behind the PIN.
+    /// </summary>
+    [Fact]
+    public async Task The_capture_reset_needs_only_the_access_code()
+    {
+        _fixtures.EnableCaptureReset();
+
+        var response = await _client.PostAsync($"/api/capture/reset?k={_code}", null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<ApiResult>();
+        Assert.True(body!.Ok, body.Message.En);
+        Assert.Single(_fixtures.Devices.Enabled);
+    }
+
+    [Fact]
+    public async Task The_capture_reset_still_needs_the_access_code()
+    {
+        var response = await _client.PostAsync("/api/capture/reset", null);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Empty(_fixtures.Devices.Disabled);
+    }
+
+    /// <summary>An unconfigured panel answers with an explanation, not a 500.</summary>
+    [Fact]
+    public async Task The_capture_reset_explains_itself_when_nothing_is_configured()
+    {
+        var response = await _client.PostAsync($"/api/capture/reset?k={_code}", null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<ApiResult>();
+        Assert.False(body!.Ok);
+        Assert.False(string.IsNullOrWhiteSpace(body.Message.En));
+        Assert.Empty(_fixtures.Devices.Disabled);
+    }
+
+    /// <summary>The device picker is behind the PIN: choosing the wrong device is the whole risk.</summary>
+    [Fact]
+    public async Task The_device_picker_needs_the_pin()
+    {
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await _client.GetAsync($"/api/diag/usb-devices?k={_code}")).StatusCode);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/diag/usb-devices?k={_code}");
+        request.Headers.Add(AccessGate.PinHeader, _pin);
+
+        var response = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var devices = await response.Content.ReadFromJsonAsync<List<PnpDeviceInfo>>();
+        Assert.NotNull(devices);
+        Assert.Contains(devices!, d => d.Name.Contains("AVerMedia"));
     }
 
     // ---------------------------------------------------------------- oauth

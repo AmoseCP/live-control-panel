@@ -48,6 +48,7 @@
     'preflight.note': ['自检有问题也可以照常开播。', 'You can go live even if a check fails.'],
     'preflight.endPrevious': ['结束上一场直播', 'End the previous broadcast'],
     'preflight.reauthorize': ['去设置页重新授权', 'Re-authorize on the settings page'],
+    'preflight.resetCapture': ['重置采集卡', 'Reset the capture card'],
 
     /* ---- phase: Live ---- */
     'live.heading': ['正在直播', 'On air'],
@@ -102,6 +103,9 @@
     'status.authValidDays': ['授权有效（剩余约 {n} 天）', 'Authorization valid (about {n} days left)'],
     'status.authProblem': ['授权需要处理', 'Authorization needs attention'],
     'status.lastAction': ['上次操作：', 'Last action: '],
+    'status.resetCapture': ['重置采集卡', 'Reset the capture card'],
+    'status.resetCaptureArm': ['再点一次，确认重置采集卡', 'Tap again to reset the capture card'],
+    'status.captureResetAt': ['上次重置采集卡：{time}', 'Capture card last reset at {time}'],
     'status.recheck': ['重新自检', 'Run checks again'],
     'status.settings': ['设置 →', 'Settings →'],
 
@@ -190,6 +194,46 @@
     'settings.obsVideo': ['画面来源名（用于自检，多个用逗号分隔）',
       'Video source names (for the checks; comma-separated)'],
     'settings.obsListInputs': ['列出 OBS 里的输入名', 'List the inputs OBS knows about'],
+    'settings.obsFrozen': ['检查画面是否静止的来源（只填摄像机，多个用逗号分隔）',
+      'Sources to check for a frozen picture (camera only; comma-separated)'],
+    'settings.obsFrozenHint': ['自检会给这些来源连拍两帧、间隔一秒多，两帧完全一样就报「画面没有变化」——' +
+      '这能抓到采集卡的 <strong>No Signal</strong> 提示图，而 OBS 自己认为那是正常画面。' +
+      '<strong>只填摄像机来源。</strong>放映用的桌面采集本来就可能长时间静止，填进来会误报，' +
+      '而误报会让人不再看自检。留空则完全不做这项检查。',
+      'The checks take two frames of these sources about a second apart and report a frozen picture when ' +
+      'they are identical. This is what catches the capture card\'s <strong>No Signal</strong> screen, ' +
+      'which OBS itself considers a perfectly good picture. <strong>List the camera source only.</strong> ' +
+      'A display capture showing a slide is legitimately still, and a false alarm is worse than no check — ' +
+      'it teaches the operator to ignore the checklist. Leave empty to skip this check entirely.'],
+
+    'settings.captureHeading': ['采集卡恢复', 'Capture-card recovery'],
+    'settings.captureHint': ['默认<strong>不开启</strong>。用于一个具体故障：采集卡卡住后画面没了，' +
+      '而<strong>重启摄像机和重启 OBS 都没用</strong>——两者都不会让 Windows 重新识别 USB 设备，' +
+      '只有重启电脑或拔插采集卡才行。开启后操作页会出现「重置采集卡」按钮，做的就是把这个设备' +
+      '禁用再启用，凌晨一个人也能自己恢复。',
+      'Off <strong>by default</strong>. It exists for one specific fault: the capture card wedges and the ' +
+      'picture is gone, while <strong>restarting the camera and restarting OBS both do nothing</strong> — ' +
+      'neither makes Windows re-enumerate a USB device, and only a reboot or re-plugging the card does. ' +
+      'Once on, the operator page grows a "reset the capture card" button that disables and re-enables ' +
+      'that device, so one person alone at 04:40 can recover it.'],
+    'settings.captureEnable': ['在操作页显示「重置采集卡」按钮',
+      'Show the "reset the capture card" button on the operator page'],
+    'settings.captureDevice': ['要重置的设备（选采集卡本身，不要选 USB 集线器）',
+      'Device to reset (the capture card itself, never a USB hub)'],
+    'settings.captureListDevices': ['重新读取设备列表', 'Re-read the device list'],
+    'settings.captureObsInput': ['重置后要重新打开的 OBS 来源（可留空）',
+      'OBS source to re-open after the reset (optional)'],
+    'settings.captureWarning': ['⚠️ 一定要选<strong>采集卡本身</strong>。选到 USB 集线器会把键盘、' +
+      '调音台一起带下去；选到调音台会在直播中静音。面板会拒绝重置集线器与输入设备这几类，' +
+      '但调音台它分辨不出来 —— 这一格选对了才安全。设备列表只列出当前接着的设备；' +
+      '采集卡换过 USB 口后设备编号会变，需要回来重新选一次。',
+      '⚠️ Pick the <strong>capture card itself</strong>. Choosing a USB hub takes the keyboard and the ' +
+      'mixer down with it; choosing the mixer silences the service. The panel refuses hubs and input ' +
+      'devices outright, but it cannot tell the mixer apart from a capture card — this field being right ' +
+      'is what makes the feature safe. The list shows only devices present right now; a card moved to ' +
+      'another USB port comes back with a different id and has to be picked again here.'],
+    'settings.captureDeviceNone': ['（未选择）', '(none selected)'],
+    'settings.captureDevicesFailed': ['读不到设备列表。', 'Could not read the device list.'],
     'settings.readFailed': ['读取失败。', 'Could not read.'],
 
     'settings.slidesHeading': ['幻灯片控制', 'Slide control'],

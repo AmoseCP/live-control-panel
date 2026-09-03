@@ -1,3 +1,4 @@
+using LiveControlPanel.Devices;
 using LiveControlPanel.Notify;
 using LiveControlPanel.Obs;
 using LiveControlPanel.Youtube;
@@ -159,6 +160,57 @@ public sealed class FakeObsClient : IObsClient
     public Task<bool?> IsSourceActiveAsync(string sourceName, CancellationToken ct = default) =>
         Task.FromResult(SourceActive.TryGetValue(sourceName, out var active) ? active : null);
 
+    /// <summary>
+    /// Successive frames per source. The pre-flight takes two samples, so a two-entry list decides
+    /// whether that source looks frozen; a shorter list repeats its last entry.
+    /// </summary>
+    public Dictionary<string, List<byte[]?>> Frames { get; } = new(StringComparer.Ordinal);
+
+    private readonly Dictionary<string, int> _frameReads = new(StringComparer.Ordinal);
+
+    public List<string> RefreshedInputs { get; } = new();
+
+    /// <summary>A source whose two samples are identical — a wedged card or a No Signal screen.</summary>
+    public void WithFrozenSource(string name, bool active = true)
+    {
+        SourceActive[name] = active;
+        Frames[name] = new List<byte[]?> { new byte[] { 1, 2, 3, 4 } };
+    }
+
+    /// <summary>A source whose samples differ — a live camera, whose sensor noise guarantees it.</summary>
+    public void WithMovingSource(string name, bool active = true)
+    {
+        SourceActive[name] = active;
+        Frames[name] = new List<byte[]?> { new byte[] { 1, 2, 3, 4 }, new byte[] { 9, 8, 7, 6 } };
+    }
+
+    /// <summary>A source OBS will not render — the check must treat this as "cannot tell".</summary>
+    public void WithUnrenderableSource(string name, bool active = true)
+    {
+        SourceActive[name] = active;
+        Frames[name] = new List<byte[]?> { null };
+    }
+
+    public Task<byte[]?> GetSourceFrameAsync(string sourceName, CancellationToken ct = default)
+    {
+        Throw(nameof(GetSourceFrameAsync));
+
+        if (!Frames.TryGetValue(sourceName, out var samples) || samples.Count == 0)
+            return Task.FromResult<byte[]?>(null);
+
+        var index = _frameReads.TryGetValue(sourceName, out var read) ? read : 0;
+        _frameReads[sourceName] = index + 1;
+
+        return Task.FromResult(samples[Math.Min(index, samples.Count - 1)]);
+    }
+
+    public Task RefreshInputAsync(string inputName, CancellationToken ct = default)
+    {
+        Throw(nameof(RefreshInputAsync));
+        RefreshedInputs.Add(inputName);
+        return Task.CompletedTask;
+    }
+
     private void Throw(string operation)
     {
         if (!FailOnce.Remove(operation, out var exception)) return;
@@ -180,5 +232,56 @@ public sealed class FakeTelegramClient : ITelegramClient
 
         Sent.Add(text);
         return Task.FromResult(new TelegramResult(true, new LiveControlPanel.Core.Msg("已发送。", "Sent.")));
+    }
+}
+
+
+// ---------------------------------------------------------------------------- capture-card recovery
+
+/// <summary>
+/// Stands in for Device Manager. The cases worth testing are all failure cases — above all the one
+/// where the device is switched off and will not come back on, which is worse than the fault being
+/// recovered from and must never be reported as a success.
+/// </summary>
+public sealed class FakeDeviceResetter : IDeviceResetter
+{
+    public const string CaptureCardId = @"USB\VID_07CA&PID_0570\5&1234ABCD&0&4";
+
+    public List<PnpDeviceInfo> Devices { get; set; } = new()
+    {
+        new PnpDeviceInfo(CaptureCardId, "AVerMedia HDMI Capture", "Camera", "OK"),
+    };
+
+    public List<string> Disabled { get; } = new();
+    public List<string> Enabled { get; } = new();
+
+    public Exception? DisableThrows { get; set; }
+
+    /// <summary>Given the 1-based attempt number, the failure to raise from Enable.</summary>
+    public Func<int, Exception?>? EnableFailure { get; set; }
+
+    public Task<IReadOnlyList<PnpDeviceInfo>> ListCandidatesAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<PnpDeviceInfo>>(Devices);
+
+    public Task<PnpDeviceInfo?> FindAsync(string instanceId, CancellationToken ct = default) =>
+        Task.FromResult(Devices.FirstOrDefault(d => d.InstanceId == instanceId));
+
+    public Task DisableAsync(string instanceId, CancellationToken ct = default)
+    {
+        if (DisableThrows is { } ex) throw ex;
+        Disabled.Add(instanceId);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>How many times Enable was called, successful or not.</summary>
+    public int EnableAttempts { get; private set; }
+
+    public Task EnableAsync(string instanceId, CancellationToken ct = default)
+    {
+        EnableAttempts++;
+        if (EnableFailure?.Invoke(EnableAttempts) is { } ex) throw ex;
+
+        Enabled.Add(instanceId);
+        return Task.CompletedTask;
     }
 }

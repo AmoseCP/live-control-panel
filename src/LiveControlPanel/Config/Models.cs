@@ -41,6 +41,45 @@ public sealed class ObsSettings
     /// sketch, but the check cannot be performed without knowing which sources to look at.
     /// </summary>
     public List<string> VideoSourceNames { get; set; } = new();
+
+    /// <summary>
+    /// Sources whose frame is additionally compared against itself a second later, to catch a
+    /// picture that is present but not moving.
+    ///
+    /// A subset of <see cref="VideoSourceNames"/> and empty by default, because the check is only
+    /// meaningful for a live camera: a display capture showing a static slide is legitimately
+    /// frozen, and flagging it would train the operator to ignore the checklist. Put the camera
+    /// capture source here and nothing else.
+    /// </summary>
+    public List<string> FrozenFrameSourceNames { get; set; } = new();
+}
+
+/// <summary>
+/// Re-enumerating the USB capture card from the panel.
+///
+/// Off until deliberately switched on, for the same reason slide control is: it reaches outside the
+/// panel and does something to the machine. The failure it exists for is specific and observed — the
+/// capture card wedges, and neither restarting OBS nor restarting the camera clears it because
+/// neither re-enumerates a USB device. Only a reboot or re-plugging the card does.
+/// </summary>
+public sealed class CaptureResetSettings
+{
+    public bool Enabled { get; set; }
+
+    /// <summary>
+    /// The device's PnP instance id, chosen by an administrator from the settings page. The reset
+    /// endpoint accepts no device parameter — this field is the only thing it can act on.
+    /// </summary>
+    public string DeviceInstanceId { get; set; } = "";
+
+    /// <summary>Display name at the time it was chosen, so the settings page can show what is configured.</summary>
+    public string DeviceName { get; set; } = "";
+
+    /// <summary>
+    /// OBS source to re-initialise after the device comes back, so the picture returns without
+    /// anyone touching OBS. Empty skips that step.
+    /// </summary>
+    public string ObsInputName { get; set; } = "";
 }
 
 public sealed class SlidesSettings
@@ -111,6 +150,7 @@ public sealed class AppSettings
     public SlidesSettings Slides { get; set; } = new();
     public MatchWindowSettings MatchWindow { get; set; } = new();
     public YouTubeSettings YouTube { get; set; } = new();
+    public CaptureResetSettings CaptureReset { get; set; } = new();
 }
 
 public static class Json

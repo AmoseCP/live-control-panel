@@ -39,6 +39,12 @@
     <PackageReference Include="Google.Apis.YouTube.v3" Version="1.68.0.3539" />
     <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="8.0.11" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
+    <!--
+      WMI, for disabling and re-enabling the USB capture card so Windows re-enumerates it. This is
+      what Disable-PnpDevice itself calls; going through it directly keeps the recovery path off
+      powershell.exe and its execution policy.
+    -->
+    <PackageReference Include="System.Management" Version="8.0.0" />
     <PackageReference Include="QRCoder" Version="1.6.0" />
     <PackageReference Include="Serilog.AspNetCore" Version="8.0.3" />
     <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />

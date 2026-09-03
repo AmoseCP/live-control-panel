@@ -2,6 +2,7 @@ using System.Runtime.Versioning;
 using System.Text.Json.Serialization;
 using LiveControlPanel.Config;
 using LiveControlPanel.Core;
+using LiveControlPanel.Devices;
 using LiveControlPanel.Net;
 using LiveControlPanel.Slides;
 using LiveControlPanel.Youtube;
@@ -42,7 +43,8 @@ public sealed record SettingsPatch(
     ObsSettings? Obs,
     SlidesSettings? Slides,
     MatchWindowSettings? MatchWindow,
-    YouTubePatch? YouTube);
+    YouTubePatch? YouTube,
+    CaptureResetSettings? CaptureReset);
 
 public sealed record YouTubePatch(string? ClientId, string? ClientSecret, int? AssumedValidityDays);
 
@@ -161,6 +163,15 @@ public static class Endpoints
 
         app.MapPost("/api/broadcast/end-previous", async (Orchestrator orchestrator, CancellationToken ct) =>
             Outcome(await orchestrator.EndPreviousAsync(ct)));
+
+        // Access code only, no PIN: this is a recovery an operator needs at 04:40, alone, from an
+        // iPad. It takes no parameters — the device it acts on is the one an administrator already
+        // chose behind the PIN, so a stray request cannot aim it somewhere else.
+        app.MapPost("/api/capture/reset", async (CaptureRecovery recovery, CancellationToken ct) =>
+        {
+            var result = await recovery.ResetAsync(ct);
+            return Results.Json(new ApiResult(result.Ok, result.Message), Json.Options);
+        });
 
         app.MapPost("/api/broadcast/start-another", (Orchestrator orchestrator) =>
             orchestrator.StartAnother()
@@ -355,6 +366,7 @@ public static class Endpoints
                     current.Slides = slides;
                 }
                 if (body.MatchWindow is not null) current.MatchWindow = body.MatchWindow;
+                if (body.CaptureReset is not null) current.CaptureReset = body.CaptureReset;
                 if (body.YouTube is { } yt)
                 {
                     current.YouTube.ClientId = yt.ClientId ?? current.YouTube.ClientId;
@@ -480,6 +492,16 @@ public static class Endpoints
             gate.IsValidPin(context)
                 ? Results.Json(new { ok = true, report = slides.ProbeCom() }, Json.Options)
                 : PinRequired());
+
+        // The picker for "which device is the capture card". Behind the PIN because choosing the
+        // wrong one is the whole risk of the reset — see DeviceResetGuard.
+        app.MapGet("/api/diag/usb-devices", async (
+            IDeviceResetter devices, AccessGate gate, HttpContext context, CancellationToken ct) =>
+        {
+            if (!gate.IsValidPin(context)) return PinRequired();
+
+            return Results.Json(await devices.ListCandidatesAsync(ct), Json.Options);
+        });
 
         app.MapGet("/api/diag/obs-inputs", async (
             Obs.IObsClient obs, AccessGate gate, HttpContext context, CancellationToken ct) =>

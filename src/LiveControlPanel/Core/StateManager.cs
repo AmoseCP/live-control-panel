@@ -164,6 +164,24 @@ public sealed class StateManager
         }
 
         _state.Phase = DerivePhase();
+        RefreshCaptureResetLocked();
+    }
+
+    /// <summary>
+    /// Mirrors the capture-reset configuration onto the pushed state, so the operator page can show
+    /// the button only where it exists. Kept here rather than set once at startup because settings
+    /// are editable while the panel runs, and a button that appears only after a restart would be
+    /// reported as "the setting did not save".
+    /// </summary>
+    private void RefreshCaptureResetLocked()
+    {
+        var settings = _config.Settings.CaptureReset;
+
+        _state.CaptureReset.Enabled =
+            settings.Enabled && !string.IsNullOrWhiteSpace(settings.DeviceInstanceId);
+
+        _state.CaptureReset.DeviceName =
+            string.IsNullOrWhiteSpace(settings.DeviceName) ? null : settings.DeviceName;
     }
 
     private string DerivePhase()

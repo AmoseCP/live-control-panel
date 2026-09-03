@@ -57,4 +57,21 @@ public interface IObsClient
 
     /// <summary>True when the named source is producing video on the program output.</summary>
     Task<bool?> IsSourceActiveAsync(string sourceName, CancellationToken ct = default);
+
+    /// <summary>
+    /// One small encoded frame of the named source, or null when OBS cannot produce one.
+    ///
+    /// Deliberately returns the encoded bytes rather than pixels: the only question asked of it is
+    /// "is this the same frame as a second ago", and byte equality answers that without decoding an
+    /// image. Null means "cannot tell" — never "no picture".
+    /// </summary>
+    Task<byte[]?> GetSourceFrameAsync(string sourceName, CancellationToken ct = default);
+
+    /// <summary>
+    /// Re-applies a source's own settings, which makes OBS re-initialise the device behind it.
+    ///
+    /// Used after the capture card has been re-enumerated: the device is back, but the source is
+    /// still holding the handle it opened before, so the picture does not return on its own.
+    /// </summary>
+    Task RefreshInputAsync(string inputName, CancellationToken ct = default);
 }

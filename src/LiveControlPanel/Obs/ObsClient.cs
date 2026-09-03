@@ -116,6 +116,66 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// A 160x90 PNG of the source. Small on purpose: nothing looks at the picture, only at whether
+    /// two of them are byte-identical, and a full-resolution screenshot on every pre-flight would be
+    /// megabytes over a WebSocket for no gain.
+    /// </summary>
+    public async Task<byte[]?> GetSourceFrameAsync(string sourceName, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(sourceName)) return null;
+
+        try
+        {
+            var data = await RequestAsync("GetSourceScreenshot", new JsonObject
+            {
+                ["sourceName"] = sourceName,
+                ["imageFormat"] = "png",
+                ["imageWidth"] = 160,
+                ["imageHeight"] = 90,
+            }, ct).ConfigureAwait(false);
+
+            var image = data?["imageData"]?.GetValue<string>();
+            if (string.IsNullOrEmpty(image)) return null;
+
+            // obs-websocket answers with a data URI, not bare base64.
+            var comma = image.IndexOf(',');
+            if (comma >= 0) image = image[(comma + 1)..];
+
+            return Convert.FromBase64String(image);
+        }
+        catch (Exception ex)
+        {
+            // An OBS build that cannot render this source, or a request type it does not know:
+            // "cannot tell", which the caller treats as "check skipped".
+            _log.LogDebug(ex, "Screenshotting source {Source} failed", sourceName);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Reads the input's settings and writes them straight back. That is a no-op to the stored
+    /// configuration but makes OBS call the source's update handler, which is what re-opens the
+    /// underlying device.
+    /// </summary>
+    public async Task RefreshInputAsync(string inputName, CancellationToken ct = default)
+    {
+        var data = await RequestAsync("GetInputSettings",
+            new JsonObject { ["inputName"] = inputName }, ct).ConfigureAwait(false);
+
+        var settings = data?["inputSettings"]?.AsObject() ?? new JsonObject();
+
+        await RequestAsync("SetInputSettings", new JsonObject
+        {
+            ["inputName"] = inputName,
+            // A detached copy: the node read above still belongs to the response document.
+            ["inputSettings"] = JsonNode.Parse(settings.ToJsonString()),
+            ["overlay"] = true,
+        }, ct).ConfigureAwait(false);
+
+        _log.LogInformation("Re-applied settings for OBS input {Input}", inputName);
+    }
+
     // ---------------------------------------------------------------- request plumbing
 
     private async Task<JsonNode?> RequestAsync(string requestType, JsonObject? requestData, CancellationToken ct)
