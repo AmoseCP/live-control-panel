@@ -166,13 +166,111 @@ tests/LiveControlPanel.Tests/
 
 反过来也钉住了：`EndPreviousAsync` 的遗留清理会排除**本场的两条** broadcast，否则它会把几分钟前自己创建的译音那条结束掉。
 
-### 现场配置要点
+### 部署（只做单语可整段跳过）
 
-面板设置页「AI 翻译」一段：开关、Gemini API Key、目标语言、标题后缀、采集设备、播放设备（**必须是 CABLE Input，绝不能选调音台的播放端**——那会把译音送进 PA 再混回原声流）、第二条推流密钥、以及一个 20 秒的链路测试。
+已经跑起来的单语部署**不需要改动任何现有配置**：原有的推流密钥、场景、音频设备、计划任务全部照旧。下面全是**加法**，而且总开关关闭时面板上不会出现任何与翻译相关的东西。
 
-OBS 侧三件事：`obs-multi-rtmp` 第二个目标（共用视频编码器 + 音轨 2 + 同步启停 + 第二个密钥）、`音频输入采集 → CABLE Output` 这个源、高级音频属性里把调音台只勾音轨 1、把 CABLE Output 只勾音轨 2。逐步操作见 `docs/DEPLOYMENT.md`。
+新机部署的完整版（含每一步的逐条验收与故障处置）在 `docs/DEPLOYMENT.md` 的 3.4 / 7.7 / 8.7 三节；这里是能照着做完的浓缩版。
 
-每个场次可以单独关掉翻译（`templates.json` 的 `translate`），也可以单独指定目标语言（`targetLanguage`）——中文讲道那场出英文、英文讲道那场出中文，用的是同一台面板同一个摄像机。
+#### 1. 装两样东西，重启 OBS
+
+| 装什么 | 哪里拿 | 干什么用 |
+| --- | --- | --- |
+| **VB-CABLE** 虚拟声卡（免费） | https://vb-audio.com/Cable/ ，**管理员身份**运行 `VBCABLE_Setup_x64.exe` → Install Driver → **重启电脑** | 面板把译音播到 `CABLE Input`，OBS 从 `CABLE Output` 拿回来。声音全程留在这台 PC 内部 |
+| **obs-multi-rtmp** 插件 | https://github.com/sorayuki/obs-multi-rtmp/releases ，选与 OBS 大版本匹配的安装包 | 把同一份编码好的画面推第二路 RTMP |
+
+装完 Windows 声音设置里应出现 `CABLE Input`（播放）与 `CABLE Output`（录音）这一对，OBS 的 **Docks** 菜单里应出现 **Multiple output**。
+
+> **别**把 `CABLE Input` 设成 Windows 默认播放设备。面板是按设备 id 明确指定的，设成默认只会让系统提示音也灌进译音流。
+
+#### 2. 面板设置页：创建第二个推流密钥
+
+设置页「AI 翻译（第二条直播）」→ **「创建翻译用推流密钥」**（两步确认），把出来的串流密钥留着，第 4 步要填。
+
+一个 `liveStream` 同一时刻只能绑一条进行中的 broadcast，所以两条直播**物理上无法共用一个密钥**。主推流那个密钥不要动。
+
+#### 3. OBS：开多音轨，把译音接进来，做音轨路由
+
+**a. Settings → Output → Output Mode 改为 `Advanced`**（多音轨的前提）
+- **Streaming** 标签页 → **Audio Track** 选 **1**
+- **Recording** 标签页 → **Audio Track** 把 **1** 和 **2** 都勾上（这一格决定编码器实际编哪几轨；不勾 2，音轨 2 永远是空的）
+
+**b. 加译音源**：Sources → **+** → **Audio Input Capture** → 命名 `翻译音频` → Device 选 **CABLE Output** → OK。
+两个场景都要有这个源（第二个场景用 **Add Existing** 引用同一个），否则切场景时译音会断。
+
+**c. 音轨路由**（整套配置最容易错的一格）：Audio Mixer → 右键任一来源 → **Advanced Audio Properties**：
+
+| 来源 | 音轨 1 | 音轨 2 | Audio Monitoring |
+| --- | --- | --- | --- |
+| `ProFX`（调音台） | ✅ | ⬜ | Monitor Off |
+| `翻译音频`（CABLE Output） | ⬜ | ✅ | Monitor Off |
+
+两行都**只勾一个**。调音台若也勾了音轨 2，第二条直播会同时听到原声和译音，两种语言叠在一起。
+
+#### 4. OBS：第二路推流（Docks → Multiple output → Add new target）
+
+| 项 | 填什么 |
+| --- | --- |
+| Name | `英文`（或 `译音`） |
+| RTMP Server | `rtmp://a.rtmp.youtube.com/live2` |
+| RTMP Key | 第 2 步创建的**翻译用**密钥（**不是**主推流那个） |
+| Video Settings → Encoder | **「与 OBS 主输出相同」/ Get from OBS** ← **必须这样选** |
+| Audio Settings → Audio Track | **2** |
+| Other Settings | 勾 **Sync start with OBS** 与 **Sync stop with OBS** |
+
+Video Encoder 选「与 OBS 主输出相同」是关键：画面只编码一次，两路共用同一份编码结果。选具体编码器就会再编一遍，凌晨那台机器同时跑采集、编码和 WPS 放映，撑不住第二份。
+
+勾了同步启停之后，**面板和操作员都不需要再碰这个面板**：面板点「开始直播」→ OBS 主推流启动 → 插件自动带起第二路。
+
+#### 5. 面板设置页：填「AI 翻译」这一段
+
+Gemini 用的是 **Google AI Studio 的普通 API Key**（https://aistudio.google.com/apikey → Create API key），不需要服务账号、不走 Vertex。
+
+| 项 | 填什么 |
+| --- | --- |
+| 启用 AI 翻译 | 勾上（总开关） |
+| Gemini API Key | 上面创建的 key |
+| 模型 | 默认 `models/gemini-3.5-live-translate-preview`。Google 改预览模型名时改这里就行，不用重新编译 |
+| 目标语言 | `en`（译音说英文）或 `zh-CN`（译音说中文）。**源语言不填**，模型自己识别 |
+| 讲员已在说目标语言时原样透传 | **勾上**（`echoTargetLanguage`）。中英混着讲时，已经是目标语言的段落原样过去而不是静音 |
+| 第二条直播的标题后缀 | `" (English)"`。第二条标题 = 原标题 + 后缀，两者**必须不同**（丢失响应的建播靠标题精确匹配来认领，同名会互相认错） |
+| 采集设备 | 调音台那个**录音**设备（如 ProFX）—— 就是 OBS 在用的同一个，WASAPI 共享模式下两边都能打开 |
+| 播放设备 | **CABLE Input**。⚠️ **绝不能选调音台的播放端** —— 那会把译音送进 PA、混回原声那条直播，还可能啸叫。面板对此不做「回退到系统默认」，找不到指定设备就报错 |
+| OBS 里翻译音频源的名称 | `翻译音频`（与第 3b 步一致）。填了自检才会检查这个源存在 |
+| 翻译音频用第几条音轨 | `2`（与第 3c 步一致）。这一格只用于自检提示与文档 —— OBS 的音轨路由无法由面板设置 |
+
+#### 6. 按场次开关（可选）
+
+不是每场都要双语，也不是每场都翻同一个方向。`%ProgramData%\LiveControlPanel\templates.json` 里每个场次可加两个字段（改完重启面板）。下面只列与翻译有关的字段，**每个场次原有的字段保持原样**：
+
+```json
+{ "id": "sunday-service", "translate": true,  "targetLanguage": "en"    }
+{ "id": "morning-service", "translate": true,  "targetLanguage": "zh-CN" }
+{ "id": "friday-prayer",   "translate": false                            }
+```
+
+- `translate` —— 该场是否出译音那条。**缺省 `true`**，即总开关一开就全场次生效；不想双语的场次显式写 `false`
+- `targetLanguage` —— 该场的目标语言，覆盖设置页的值
+
+中文讲道那场出英文、英文讲道那场出中文，用的是同一台面板、同一个摄像机、同一份编码。设置页的场次表有一列「翻译」，可以一眼核对哪几场是双语、翻到哪个语言。
+
+#### 7. 验证（这四项都要做）
+
+1. **链路测试**：设置页点「测试翻译链路（约 20 秒）」，对麦**连续讲几句**。通了会回显「听到的原话」和「翻译结果」；不通会直接说是 key 错、采集设备错、还是没听到声音
+2. **自检多一项**：双语场次的开播前自检从五项变六项，多出的「翻译」也要绿（缺 key、缺第二个密钥、虚拟声卡不在、OBS 里找不到译音源，各有对应提示）
+3. **两条都上线**：开播后「直播链接」出现两个链接，两个都能打开，**画面一样、声音不同**
+4. **拔网线演练（最重要的一项）**：直播进行中拔掉网线或关掉 WiFi 十几秒再恢复 —— 面板「AI 翻译」应变红或变黄，而**原声那条直播不能断**；恢复网络后点「重新连接翻译」应能恢复
+
+第 4 项是这块设计的核心声明，不要跳过。凌晨独自值守时看到翻译报警，正确处置是「点一次重新连接，不行就不管它，把这场播完」——**绝不要为了修翻译去停直播**。
+
+#### 最容易错的四处
+
+| 症状 | 几乎总是这一处 |
+| --- | --- |
+| 译音那条**没声音** | 播放设备不是 `CABLE Input`，或 `翻译音频` 没勾音轨 2 |
+| 译音那条**根本没上线** | 多路推流目标没勾「与 OBS 同步开始」，或密钥填的是主推流那个 |
+| 译音那条**能听到两种语言叠在一起** | 调音台那一行同时勾了音轨 1 和音轨 2 |
+| **CPU 直接顶满** | 多路推流目标的 Video Encoder 没选「与 OBS 主输出相同」，在编第二份 |
 
 ---
 
@@ -402,33 +500,40 @@ dotnet test
 3. BotFather 建 Telegram bot，拉进群，群里发 `/start`，从 `getUpdates` 取 chat_id（**负数**，超级群带 `-100` 前缀）
 4. OBS：推流用**推流密钥模式**；音频源放在**全局音频设备**里（不要放进任何单个场景，否则切场景时声音会断）；桌面音频禁用；该音频源的监听关闭；Tools → WebSocket Server Settings 启用并设密码
 5. 通用封面 1280×720、2 MB 以内，放到 `%ProgramData%\LiveControlPanel\thumbnails\default.jpg`
+6. 做双语才要：**Google AI Studio 的 API Key**（<https://aistudio.google.com/apikey>，普通 API Key，不需要服务账号）
 
 **面板里做的**
 
-6. 设置页填 Client ID / Secret → 「开始授权」
-7. 设置页「创建可复用推流密钥」→ 把串流密钥填进 OBS（**此后永不再改**）
-8. 设置页填 Telegram token 与 chat_id → 「发送测试消息」确认
-9. 让 WPS 进入全屏放映，然后**调用 `GET /api/diag/com-probe`** 确认 WPS 的自动化接口支持到哪一层。
+7. 设置页填 Client ID / Secret → 「开始授权」
+8. 设置页「创建可复用推流密钥」→ 把串流密钥填进 OBS（**此后永不再改**）
+9. 设置页填 Telegram token 与 chat_id → 「发送测试消息」确认
+10. 让 WPS 进入全屏放映，然后**调用 `GET /api/diag/com-probe`** 确认 WPS 的自动化接口支持到哪一层。
    若整条链到 `Slide.Export` 都通过，翻页走 COM、页码与下一页预览都可用；
    若在中途断掉，翻页会退回按键 —— 此时必须在设置页「列出所有窗口」里选中放映窗口填入类名，
    并实测按 `PostMessage` 能否真的翻页，不行就把 `strategy` 改成 `SendInput`（会短暂抢焦点）
-10. 设置页填 `obs.videoSourceNames`（采集卡、电视采集源的名字），让 `video` 自检生效
+11. 设置页填 `obs.videoSourceNames`（采集卡、电视采集源的名字），让 `video` 自检生效
 
 **双语（不做双语可整段跳过）**
 
-10a. 装 **VB-CABLE**（免费虚拟声卡）与 **obs-multi-rtmp** 插件，重启 OBS
-10b. 设置页「创建翻译用推流密钥」→ 填进 obs-multi-rtmp 第二个目标；该目标视频编码器选**「与 OBS 主输出相同」**、音频选**音轨 2**、勾**「与 OBS 同步开始/停止」**
-10c. OBS 加源「音频输入采集 → CABLE Output」；高级音频属性里调音台只勾**音轨 1**、CABLE Output 只勾**音轨 2**
-10d. 设置页「AI 翻译」：填 Gemini API Key、目标语言、采集设备（调音台那个录音设备）、播放设备（**CABLE Input**，绝不能选调音台的播放端）
-10e. 点「测试翻译链路」，对麦讲几句，确认返回了听到的原话与翻译结果
+全部是加法，不改动上面任何一条。逐步操作见前面「双语直播：同一画面，两条语音」里的**部署**一节，这里只是勾选清单：
+
+- 装 **VB-CABLE** 与 **obs-multi-rtmp**，重启电脑与 OBS
+- 设置页「创建翻译用推流密钥」（**必须是第二个密钥**，一个 liveStream 只能绑一条进行中的直播）
+- OBS 输出模式改 **Advanced**；Streaming 音轨 **1**、Recording 音轨勾 **1+2**
+- OBS 加源「音频输入采集 → CABLE Output」，命名 `翻译音频`，**两个场景都要有**
+- 高级音频属性：调音台**只勾音轨 1**、`翻译音频`**只勾音轨 2**，两者监听都 **Monitor Off**
+- 多路推流第二个目标：翻译用密钥 + 视频编码器**「与 OBS 主输出相同」** + 音轨 **2** + 勾**同步开始/停止**
+- 设置页「AI 翻译」：Gemini API Key、目标语言、采集设备（调音台那个**录音**设备）、播放设备（**CABLE Input**，⚠️ 绝不能选调音台的播放端）
+- 点「测试翻译链路」对麦讲几句，确认回显了听到的原话与翻译结果；确认自检第六项「翻译」为绿
+- **拔网线演练**：直播中断网十几秒，确认原声那条不断、翻译报警、恢复后能重连
 
 **系统配套**
 
-11. 防火墙放行端口 5088，**规则须同时覆盖「专用」与「公用」**（教会 WiFi 的网络配置文件分类可能变化）；
+12. 防火墙放行端口 5088，**规则须同时覆盖「专用」与「公用」**（教会 WiFi 的网络配置文件分类可能变化）；
     先用 `netsh interface ipv4 show excludedportrange protocol=tcp` 确认 5088 没被系统保留
-12. Windows 自动登录（配合 UPS，断电重启后自动恢复）—— **这是面板随登录启动方案的前提**
-13. Windows Update「使用时间」覆盖 **04:00–20:00** —— 默认会在凌晨装更新并重启，正好撞上 04:40 的场次
-14. OBS 开机自启，浏览器停靠面板指向 `http://localhost:5088/?k=<访问码>`（`localhost` 属安全上下文，剪贴板 API 可用）
+13. Windows 自动登录（配合 UPS，断电重启后自动恢复）—— **这是面板随登录启动方案的前提**
+14. Windows Update「使用时间」覆盖 **04:00–20:00** —— 默认会在凌晨装更新并重启，正好撞上 04:40 的场次
+15. OBS 开机自启，浏览器停靠面板指向 `http://localhost:5088/?k=<访问码>`（`localhost` 属安全上下文，剪贴板 API 可用）
 
 **分批上线**，不要七场一起切：Sunday 10:30 → Wednesday/Friday 18:00 → 最后才是 04:40 的五场。**凌晨场最不该用来试新东西。**
 

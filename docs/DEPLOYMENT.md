@@ -554,7 +554,7 @@ C:\ProgramData\LiveControlPanel\thumbnails\default.jpg
 | 「已连上并听到了声音,但还没有收到翻译语音」 | 多讲几句再测。模型要听到成句的内容才会开口 |
 | 「找不到设置里选的声音设备」 | 调音台或虚拟声卡不在了:确认调音台开机、USB 插在原来的口(换口会让设备 id 变),VB-CABLE 还装着,然后重新选一次设备 |
 
-**按场次开关:** 不是每场都要双语,也不是每场都翻同一个方向。`C:\ProgramData\LiveControlPanel\templates.json` 里每个场次可以加两个字段(改完重启面板):
+**按场次开关:** 不是每场都要双语,也不是每场都翻同一个方向。`C:\ProgramData\LiveControlPanel\templates.json` 里每个场次可以加两个字段(改完重启面板)。下面只列与翻译有关的字段,**每个场次原有的字段保持原样**:
 
 ```json
 { "id": "sunday-service", "translate": true,  "targetLanguage": "en" }
