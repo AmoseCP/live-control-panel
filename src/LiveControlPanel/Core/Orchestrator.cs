@@ -1,5 +1,6 @@
 using LiveControlPanel.Config;
 using LiveControlPanel.Obs;
+using LiveControlPanel.Translate;
 using LiveControlPanel.Youtube;
 
 namespace LiveControlPanel.Core;
@@ -7,7 +8,7 @@ namespace LiveControlPanel.Core;
 public sealed record StartOutcome(bool Ok, int? FailedStep, Msg Message);
 
 /// <summary>
-/// The six-step start-today sequence of FR 4.2.
+/// The start-today sequence of FR 4.2, extended to the bilingual case.
 ///
 /// Three properties are load-bearing:
 /// <list type="bullet">
@@ -18,21 +19,29 @@ public sealed record StartOutcome(bool Ok, int? FailedStep, Msg Message);
 /// <item>Observable. Progress is pushed after each step so the operator does not conclude it hung
 /// and start tapping.</item>
 /// </list>
+///
+/// The second, AI-translated broadcast rides along inside the same steps rather than getting its own
+/// sequence, and it is subordinate throughout: it is created, bound and given a thumbnail alongside
+/// the primary one, but nothing about it may fail the run. OBS is still asked to start exactly one
+/// stream — obs-multi-rtmp's "sync start/stop with OBS" carries the second RTMP target off the same
+/// video encoder — so there is no second output for this panel to get wrong.
 /// </summary>
 public sealed class Orchestrator
 {
     public const int StepCreate = 1;
     public const int StepBind = 2;
     public const int StepThumbnail = 3;
-    public const int StepScene = 4;
-    public const int StepStream = 5;
-    public const int StepAwaitLive = 6;
+    public const int StepTranslate = 4;
+    public const int StepScene = 5;
+    public const int StepStream = 6;
+    public const int StepAwaitLive = 7;
 
     private static readonly (int Step, Msg Name)[] StepNames =
     {
         (StepCreate, new Msg("创建直播", "Create broadcast")),
         (StepBind, new Msg("绑定推流密钥", "Bind stream key")),
         (StepThumbnail, new Msg("上传封面", "Upload thumbnail")),
+        (StepTranslate, new Msg("启动 AI 翻译", "Start AI translation")),
         (StepScene, new Msg("切换画面", "Switch scene")),
         (StepStream, new Msg("开始推流", "Start streaming")),
         (StepAwaitLive, new Msg("等待 YouTube 上线", "Wait for YouTube to go live")),
@@ -41,10 +50,20 @@ public sealed class Orchestrator
     private static readonly TimeSpan LivePollInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan LivePollTimeout = TimeSpan.FromSeconds(60);
 
+    /// <summary>
+    /// How long the translated broadcast is given to come up after the primary one is live. Short on
+    /// purpose: by then the service is already on air, and this is a warning, not a gate.
+    ///
+    /// Settable for the same reason <see cref="StateManager.Clock"/> is — the suite must be able to
+    /// exercise the timeout without sitting out half a minute of real waiting.
+    /// </summary>
+    internal TimeSpan TranslatedLiveTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
     private readonly ConfigStore _config;
     private readonly StateManager _state;
     private readonly IYouTubeClient _youtube;
     private readonly IObsClient _obs;
+    private readonly ITranslationService _translation;
     private readonly ILogger<Orchestrator> _log;
 
     /// <summary>Serializes runs. Taken with a zero timeout so a concurrent tap is rejected, not queued.</summary>
@@ -55,12 +74,14 @@ public sealed class Orchestrator
         StateManager state,
         IYouTubeClient youtube,
         IObsClient obs,
+        ITranslationService translation,
         ILogger<Orchestrator> log)
     {
         _config = config;
         _state = state;
         _youtube = youtube;
         _obs = obs;
+        _translation = translation;
         _log = log;
     }
 
@@ -105,6 +126,7 @@ public sealed class Orchestrator
     private async Task<StartOutcome> RunStepsAsync(TodayState today, int fromStep, CancellationToken ct)
     {
         var template = today.TemplateId is null ? null : _config.FindTemplate(today.TemplateId);
+        var plan = TranslationPlan.For(_config.Settings, template);
 
         for (var step = Math.Max(StepCreate, fromStep); step <= StepAwaitLive; step++)
         {
@@ -112,8 +134,8 @@ public sealed class Orchestrator
 
             try
             {
-                var message = await RunStepAsync(step, today, template, ct).ConfigureAwait(false);
-                SetStep(step, message.Skipped ? "skipped" : "done", message.Text);
+                var message = await RunStepAsync(step, today, template, plan, ct).ConfigureAwait(false);
+                SetStep(step, StatusOf(message), message.Text);
             }
             catch (Exception ex)
             {
@@ -129,49 +151,121 @@ public sealed class Orchestrator
         return new StartOutcome(true, null, new Msg("直播已开始。", "The broadcast has started."));
     }
 
-    private sealed record StepMessage(Msg? Text, bool Skipped = false);
+    private static string StatusOf(StepMessage message) =>
+        message.Warn ? "warn" : message.Skipped ? "skipped" : "done";
+
+    /// <summary>
+    /// A step's outcome. <see cref="Warn"/> is the bilingual case's whole safety story: the step did
+    /// not do what it was asked, the sequence continues anyway, and no retry is offered — because
+    /// everything that can warn is something the congregation's stream does not depend on.
+    /// </summary>
+    private sealed record StepMessage(Msg? Text, bool Skipped = false, bool Warn = false);
 
     private async Task<StepMessage> RunStepAsync(
-        int step, TodayState today, ServiceTemplate? template, CancellationToken ct) => step switch
+        int step, TodayState today, ServiceTemplate? template, TranslationPlan plan,
+        CancellationToken ct) => step switch
     {
-        StepCreate => await CreateAsync(today, template, ct).ConfigureAwait(false),
-        StepBind => await BindAsync(ct).ConfigureAwait(false),
+        StepCreate => await CreateAsync(today, template, plan, ct).ConfigureAwait(false),
+        StepBind => await BindAsync(plan, ct).ConfigureAwait(false),
         StepThumbnail => await ThumbnailAsync(template, ct).ConfigureAwait(false),
+        StepTranslate => await TranslateAsync(plan, ct).ConfigureAwait(false),
         StepScene => await SceneAsync(ct).ConfigureAwait(false),
         StepStream => await StreamAsync(ct).ConfigureAwait(false),
         StepAwaitLive => await AwaitLiveAsync(ct).ConfigureAwait(false),
         _ => throw new ArgumentOutOfRangeException(nameof(step), step, "Unknown orchestration step."),
     };
 
-    // ---------------------------------------------------------------- steps
+    // ---------------------------------------------------------------- step 1: create
 
-    private async Task<StepMessage> CreateAsync(TodayState today, ServiceTemplate? template, CancellationToken ct)
+    private async Task<StepMessage> CreateAsync(
+        TodayState today, ServiceTemplate? template, TranslationPlan plan, CancellationToken ct)
     {
-        // Idempotency anchor: a broadcast already exists, so never insert a second one.
-        var existing = _state.Read(s => s.Broadcast);
-        if (existing?.Id is not null) return new StepMessage(new Msg($"已存在直播 {existing.Id}", $"Broadcast {existing.Id} already exists"), Skipped: true);
+        var settings = _config.Settings;
+        var description = Coalesce(today.Description,
+            Coalesce(template?.Description, settings.DefaultDescription));
 
-        // Second anchor, on YouTube's side: if a previous attempt's insert succeeded but the
-        // response was lost (timeout mid-create), the local state is empty while the broadcast
-        // exists. Titles carry the date, so an unfinished broadcast with today's exact title is
-        // that lost attempt — adopt it instead of creating a duplicate.
+        var primary = _state.Read(s => s.Broadcast);
+        Msg primaryMessage;
+
+        if (primary?.Id is not null)
+        {
+            primaryMessage = new Msg($"已存在直播 {primary.Id}", $"Broadcast {primary.Id} already exists");
+        }
+        else
+        {
+            var info = await CreateOneAsync(today.Title!, description, template, ct).ConfigureAwait(false);
+            _state.Mutate(s => s.Broadcast = NewBroadcastState(info, _state.Clock()));
+            primaryMessage = info.Adopted
+                ? new Msg($"沿用已创建的 {info.Id}", $"Reusing existing {info.Id}")
+                : new Msg($"已创建 {info.Id}", $"Created {info.Id}");
+        }
+
+        var skipped = primary?.Id is not null;
+
+        if (!plan.Active) return new StepMessage(primaryMessage, Skipped: skipped);
+
+        if (!plan.Ready)
+        {
+            return new StepMessage(new Msg(
+                $"{primaryMessage.Zh}；未创建翻译直播：还没有配好第二条推流密钥或 Gemini API Key。",
+                $"{primaryMessage.En}; no translated broadcast: the second stream key or the Gemini API " +
+                "key is not configured yet."), Warn: true);
+        }
+
+        var existingTranslated = _state.Read(s => s.Translated);
+        if (existingTranslated?.Id is not null)
+        {
+            return new StepMessage(new Msg(
+                $"{primaryMessage.Zh}；翻译直播 {existingTranslated.Id} 已存在",
+                $"{primaryMessage.En}; translated broadcast {existingTranslated.Id} already exists"),
+                Skipped: skipped);
+        }
+
+        // The translated broadcast is best-effort from here down. Failing to create it must leave the
+        // primary one — already created above — untouched and the sequence running.
+        try
+        {
+            var translatedTitle = plan.TitleFor(today.Title!);
+            var translated = await CreateOneAsync(translatedTitle, description, template, ct).ConfigureAwait(false);
+            _state.Mutate(s => s.Translated = NewBroadcastState(translated, _state.Clock()));
+
+            return new StepMessage(new Msg(
+                $"{primaryMessage.Zh}；翻译直播 {translated.Id}",
+                $"{primaryMessage.En}; translated broadcast {translated.Id}"));
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Creating the translated broadcast failed");
+            return new StepMessage(new Msg(
+                $"{primaryMessage.Zh}；翻译直播创建失败，本场只有原声。",
+                $"{primaryMessage.En}; the translated broadcast could not be created, so this service is " +
+                "original audio only."), Warn: true);
+        }
+    }
+
+    private sealed record CreatedBroadcast(string Id, string Title, string WatchUrl, bool Adopted);
+
+    /// <summary>
+    /// Creates one broadcast, adopting a lost attempt of the same title rather than duplicating it.
+    ///
+    /// The second anchor, on YouTube's side: if a previous attempt's insert succeeded but the
+    /// response was lost (timeout mid-create), the local state is empty while the broadcast exists.
+    /// Titles carry the date, so an unfinished broadcast with this exact title is that lost attempt.
+    /// The translated broadcast's title suffix is what keeps the two apart here.
+    /// </summary>
+    private async Task<CreatedBroadcast> CreateOneAsync(
+        string title, string description, ServiceTemplate? template, CancellationToken ct)
+    {
         try
         {
             var leftover = (await _youtube.ListUnfinishedBroadcastsAsync(ct).ConfigureAwait(false))
-                .FirstOrDefault(b => b.Title == today.Title);
+                .FirstOrDefault(b => b.Title == title);
+
             if (leftover is not null)
             {
-                _state.Mutate(s => s.Broadcast = new BroadcastState
-                {
-                    Id = leftover.Id,
-                    WatchUrl = leftover.WatchUrl,
-                    Status = BroadcastStatus.Created,
-                    Title = leftover.Title,
-                    CreatedOn = _state.Clock(),
-                });
                 _log.LogInformation("Adopted existing broadcast {Id} \"{Title}\" instead of creating a duplicate",
                     leftover.Id, leftover.Title);
-                return new StepMessage(new Msg($"沿用已创建的 {leftover.Id}", $"Reusing existing {leftover.Id}"));
+                return new CreatedBroadcast(leftover.Id, leftover.Title, leftover.WatchUrl, Adopted: true);
             }
         }
         catch (Exception ex)
@@ -181,12 +275,8 @@ public sealed class Orchestrator
             _log.LogDebug(ex, "Checking for an existing broadcast before create failed");
         }
 
-        var settings = _config.Settings;
-        var description = Coalesce(today.Description,
-            Coalesce(template?.Description, settings.DefaultDescription));
-
         var info = await _youtube.CreateBroadcastAsync(new CreateBroadcastRequest(
-            Title: today.Title!,
+            Title: title,
             Description: description,
             // The moment the operator actually pressed start, not the template's announced time.
             // Operators run early or late, and with enableAutoStart the broadcast goes live within
@@ -198,43 +288,85 @@ public sealed class Orchestrator
             MadeForKids: template?.MadeForKids ?? false,
             LatencyPreference: Coalesce(template?.LatencyPreference, "ultraLow")), ct).ConfigureAwait(false);
 
-        _state.Mutate(s => s.Broadcast = new BroadcastState
-        {
-            Id = info.Id,
-            WatchUrl = info.WatchUrl,
-            Status = BroadcastStatus.Created,
-            Title = info.Title,
-            CreatedOn = _state.Clock(),
-        });
-
-        return new StepMessage(new Msg($"已创建 {info.Id}", $"Created {info.Id}"));
+        return new CreatedBroadcast(info.Id, info.Title, info.WatchUrl, Adopted: false);
     }
 
-    private async Task<StepMessage> BindAsync(CancellationToken ct)
+    private static BroadcastState NewBroadcastState(CreatedBroadcast info, DateTime now) => new()
+    {
+        Id = info.Id,
+        WatchUrl = info.WatchUrl,
+        Status = BroadcastStatus.Created,
+        Title = info.Title,
+        CreatedOn = now,
+    };
+
+    // ---------------------------------------------------------------- step 2: bind
+
+    private async Task<StepMessage> BindAsync(TranslationPlan plan, CancellationToken ct)
     {
         var broadcast = RequireBroadcast();
-        if (broadcast.Status is not BroadcastStatus.Created)
-            return new StepMessage(new Msg("已绑定", "Already bound"), Skipped: true);
+        var skipped = broadcast.Status is not BroadcastStatus.Created;
 
-        var streamId = _config.Settings.StreamId;
-        if (string.IsNullOrWhiteSpace(streamId))
-            throw new LocalizedInvalidOperationException(new Msg(
-                "还没有创建推流密钥。请让管理员在设置页点击「创建推流密钥」，并把密钥填进 OBS。",
-                "No stream key has been created yet. Ask the administrator to create one on the settings " +
-                "page and enter it in OBS."));
+        if (!skipped)
+        {
+            var streamId = _config.Settings.StreamId;
+            if (string.IsNullOrWhiteSpace(streamId))
+                throw new LocalizedInvalidOperationException(new Msg(
+                    "还没有创建推流密钥。请让管理员在设置页点击「创建推流密钥」，并把密钥填进 OBS。",
+                    "No stream key has been created yet. Ask the administrator to create one on the settings " +
+                    "page and enter it in OBS."));
 
-        await _youtube.BindStreamAsync(broadcast.Id!, streamId, ct).ConfigureAwait(false);
-        _state.Mutate(s => s.Broadcast!.Status = BroadcastStatus.Bound);
-        return new StepMessage(new Msg("已绑定推流密钥", "Stream key bound"));
+            await _youtube.BindStreamAsync(broadcast.Id!, streamId, ct).ConfigureAwait(false);
+            _state.Mutate(s => s.Broadcast!.Status = BroadcastStatus.Bound);
+        }
+
+        var primaryMessage = skipped
+            ? new Msg("已绑定", "Already bound")
+            : new Msg("已绑定推流密钥", "Stream key bound");
+
+        var translated = _state.Read(s => s.Translated);
+        if (translated?.Id is null || translated.Status is not BroadcastStatus.Created)
+            return new StepMessage(primaryMessage, Skipped: skipped);
+
+        // Its own key, because one liveStream can only back one live broadcast at a time.
+        try
+        {
+            await _youtube.BindStreamAsync(translated.Id, _config.Settings.Translation.StreamId, ct)
+                .ConfigureAwait(false);
+            _state.Mutate(s =>
+            {
+                if (s.Translated is not null) s.Translated.Status = BroadcastStatus.Bound;
+            });
+
+            return new StepMessage(new Msg(
+                $"{primaryMessage.Zh}（两条）", $"{primaryMessage.En} (both)"));
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Binding the translated broadcast failed");
+            return new StepMessage(new Msg(
+                $"{primaryMessage.Zh}；翻译直播绑定失败，本场只有原声。",
+                $"{primaryMessage.En}; the translated broadcast could not be bound, so this service is " +
+                "original audio only."), Warn: true);
+        }
     }
+
+    // ---------------------------------------------------------------- step 3: thumbnail
 
     private async Task<StepMessage> ThumbnailAsync(ServiceTemplate? template, CancellationToken ct)
     {
         var broadcast = RequireBroadcast();
-        if (broadcast.ThumbnailUploaded) return new StepMessage(new Msg("封面已上传", "Thumbnail already uploaded"), Skipped: true);
+        var translated = _state.Read(s => s.Translated);
+
+        var pendingPrimary = !broadcast.ThumbnailUploaded;
+        var pendingTranslated = translated?.Id is not null && !translated.ThumbnailUploaded;
+
+        if (!pendingPrimary && !pendingTranslated)
+            return new StepMessage(new Msg("封面已上传", "Thumbnail already uploaded"), Skipped: true);
 
         var relative = Coalesce(template?.ThumbnailFile, _config.Settings.DefaultThumbnail);
-        if (string.IsNullOrWhiteSpace(relative)) return new StepMessage(new Msg("未配置封面", "No thumbnail configured"), Skipped: true);
+        if (string.IsNullOrWhiteSpace(relative))
+            return new StepMessage(new Msg("未配置封面", "No thumbnail configured"), Skipped: true);
 
         var path = _config.Paths.Resolve(relative);
         if (!File.Exists(path))
@@ -244,11 +376,75 @@ public sealed class Orchestrator
             return new StepMessage(new Msg("找不到封面文件，已跳过", "Thumbnail file not found; skipped"), Skipped: true);
         }
 
-        await using var stream = File.OpenRead(path);
-        await _youtube.SetThumbnailAsync(broadcast.Id!, stream, ContentType(path), ct).ConfigureAwait(false);
-        _state.Mutate(s => s.Broadcast!.ThumbnailUploaded = true);
-        return new StepMessage(new Msg("封面已上传", "Thumbnail uploaded"));
+        var contentType = ContentType(path);
+
+        if (pendingPrimary)
+        {
+            await using var stream = File.OpenRead(path);
+            await _youtube.SetThumbnailAsync(broadcast.Id!, stream, contentType, ct).ConfigureAwait(false);
+            _state.Mutate(s => s.Broadcast!.ThumbnailUploaded = true);
+        }
+
+        if (!pendingTranslated) return new StepMessage(new Msg("封面已上传", "Thumbnail uploaded"));
+
+        try
+        {
+            // A fresh stream: the upload above consumed the first one to its end.
+            await using var stream = File.OpenRead(path);
+            await _youtube.SetThumbnailAsync(translated!.Id!, stream, contentType, ct).ConfigureAwait(false);
+            _state.Mutate(s =>
+            {
+                if (s.Translated is not null) s.Translated.ThumbnailUploaded = true;
+            });
+
+            return new StepMessage(new Msg("封面已上传（两条）", "Thumbnail uploaded (both)"));
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Uploading the translated broadcast's thumbnail failed");
+            return new StepMessage(new Msg(
+                "原声那条封面已上传；翻译那条没传上，不影响直播。",
+                "The primary thumbnail is uploaded; the translated one failed, which does not affect the " +
+                "broadcast."), Warn: true);
+        }
     }
+
+    // ---------------------------------------------------------------- step 4: translation
+
+    /// <summary>
+    /// Brings the AI translator up before OBS starts sending, so the translated audio track has
+    /// content from the first frame rather than a silent opening minute.
+    ///
+    /// It cannot fail the run. Every path that is not "it started" ends in a warning, and the service
+    /// goes on air either way — with the translated stream silent until someone fixes it.
+    /// </summary>
+    private async Task<StepMessage> TranslateAsync(TranslationPlan plan, CancellationToken ct)
+    {
+        if (!plan.Active)
+            return new StepMessage(new Msg("本场不做翻译", "No translation for this service"), Skipped: true);
+
+        var translated = _state.Read(s => s.Translated);
+        if (translated?.Id is null)
+            return new StepMessage(new Msg(
+                "没有翻译直播，已跳过。", "No translated broadcast; skipped."), Skipped: true);
+
+        try
+        {
+            var problem = await _translation.StartAsync(plan.TargetLanguage, ct).ConfigureAwait(false);
+            if (problem is null)
+                return new StepMessage(new Msg(
+                    $"翻译已启动（{plan.TargetLanguage}）", $"Translation started ({plan.TargetLanguage})"));
+
+            return new StepMessage(problem, Warn: true);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Starting the translator failed");
+            return new StepMessage(FriendlyError.Describe(ex), Warn: true);
+        }
+    }
+
+    // ---------------------------------------------------------------- steps 5-7
 
     private async Task<StepMessage> SceneAsync(CancellationToken ct)
     {
@@ -262,6 +458,11 @@ public sealed class Orchestrator
         return new StepMessage(new Msg($"已切到「{scene}」", $"Switched to \"{scene}\""));
     }
 
+    /// <summary>
+    /// One stream, exactly as before the second broadcast existed. The plugin's "sync start with OBS"
+    /// is what puts the translated RTMP target on air, which is deliberate: there is no second output
+    /// here to start, to get out of step, or to leave running.
+    /// </summary>
     private async Task<StepMessage> StreamAsync(CancellationToken ct)
     {
         // Idempotency: OBS is already sending, so do not restart the output.
@@ -274,57 +475,126 @@ public sealed class Orchestrator
     /// <summary>
     /// Polls until YouTube reports the broadcast live. enableAutoStart makes the transition automatic
     /// once frames arrive; this only waits for it so the operator knows the link really works.
+    ///
+    /// The translated broadcast is then given a short, separate wait. It depends on the OBS plugin
+    /// being configured, which this panel cannot see — so its absence is reported as a warning naming
+    /// the thing to check, never as a failed step on a service that is already on air.
     /// </summary>
     private async Task<StepMessage> AwaitLiveAsync(CancellationToken ct)
     {
         var broadcast = RequireBroadcast();
-        if (broadcast.Status == BroadcastStatus.Live) return new StepMessage(new Msg("已上线", "Already live"), Skipped: true);
 
-        var deadline = DateTime.UtcNow + LivePollTimeout;
-
-        while (DateTime.UtcNow < deadline)
+        if (broadcast.Status != BroadcastStatus.Live)
         {
-            var status = await _youtube.GetLifeCycleStatusAsync(broadcast.Id!, ct).ConfigureAwait(false);
+            var deadline = DateTime.UtcNow + LivePollTimeout;
+            var live = false;
+
+            while (DateTime.UtcNow < deadline)
+            {
+                var status = await _youtube.GetLifeCycleStatusAsync(broadcast.Id!, ct).ConfigureAwait(false);
+
+                if (status == "live")
+                {
+                    _state.Mutate(s => s.Broadcast!.Status = BroadcastStatus.Live);
+                    live = true;
+                    break;
+                }
+
+                // Ended while we were waiting — stopped from this panel in a race, or in YouTube Studio.
+                // Polling a finished broadcast for the remaining minute would end in a "retry this step"
+                // that can never succeed.
+                if (status is "complete" or "revoked")
+                {
+                    _state.Mutate(s =>
+                    {
+                        if (s.Broadcast is not null) s.Broadcast.Status = BroadcastStatus.Complete;
+                    });
+                    throw new LocalizedInvalidOperationException(new Msg(
+                        "这场直播已经结束，不会再上线。若要再播一场，请点「开始另一场」。",
+                        "This broadcast has already ended and will not go live. Use \"start another " +
+                        "service\" to run a new one."));
+                }
+
+                if (status == "testing")
+                    _state.Mutate(s => s.Broadcast!.Status = BroadcastStatus.Testing);
+
+                await Task.Delay(LivePollInterval, ct).ConfigureAwait(false);
+            }
+
+            if (!live)
+                throw new LocalizedTimeoutException(new Msg(
+                    "YouTube 还没有确认收到画面。推流可能仍在建立，请稍等十几秒后点「重试这一步」；若持续如此，请检查网络。",
+                    "YouTube has not confirmed it is receiving video yet. The stream may still be establishing — " +
+                    "wait about fifteen seconds and retry this step; if it persists, check the network."));
+        }
+
+        return await AwaitTranslatedLiveAsync(ct).ConfigureAwait(false);
+    }
+
+    private async Task<StepMessage> AwaitTranslatedLiveAsync(CancellationToken ct)
+    {
+        var translated = _state.Read(s => s.Translated);
+        if (translated?.Id is null) return new StepMessage(new Msg("YouTube 已上线", "YouTube is live"));
+
+        if (translated.Status == BroadcastStatus.Live)
+            return new StepMessage(new Msg("两条都已上线", "Both broadcasts are live"));
+
+        var deadline = DateTime.UtcNow + TranslatedLiveTimeout;
+
+        while (DateTime.UtcNow < deadline && !ct.IsCancellationRequested)
+        {
+            string? status;
+            try
+            {
+                status = await _youtube.GetLifeCycleStatusAsync(translated.Id, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _log.LogDebug(ex, "Polling the translated broadcast's status failed");
+                break;
+            }
 
             if (status == "live")
             {
-                _state.Mutate(s => s.Broadcast!.Status = BroadcastStatus.Live);
-                return new StepMessage(new Msg("YouTube 已上线", "YouTube is live"));
-            }
-
-            // Ended while we were waiting — stopped from this panel in a race, or in YouTube Studio.
-            // Polling a finished broadcast for the remaining minute would end in a "retry this step"
-            // that can never succeed.
-            if (status is "complete" or "revoked")
-            {
                 _state.Mutate(s =>
                 {
-                    if (s.Broadcast is not null) s.Broadcast.Status = BroadcastStatus.Complete;
+                    if (s.Translated is not null) s.Translated.Status = BroadcastStatus.Live;
                 });
-                throw new LocalizedInvalidOperationException(new Msg(
-                    "这场直播已经结束，不会再上线。若要再播一场，请点「开始另一场」。",
-                    "This broadcast has already ended and will not go live. Use \"start another " +
-                    "service\" to run a new one."));
+                return new StepMessage(new Msg("两条都已上线", "Both broadcasts are live"));
             }
 
+            if (status is "complete" or "revoked") break;
+
             if (status == "testing")
-                _state.Mutate(s => s.Broadcast!.Status = BroadcastStatus.Testing);
+                _state.Mutate(s =>
+                {
+                    if (s.Translated is not null) s.Translated.Status = BroadcastStatus.Testing;
+                });
 
             await Task.Delay(LivePollInterval, ct).ConfigureAwait(false);
         }
 
-        throw new LocalizedTimeoutException(new Msg(
-            "YouTube 还没有确认收到画面。推流可能仍在建立，请稍等十几秒后点「重试这一步」；若持续如此，请检查网络。",
-            "YouTube has not confirmed it is receiving video yet. The stream may still be establishing — " +
-            "wait about fifteen seconds and retry this step; if it persists, check the network."));
+        return new StepMessage(new Msg(
+            "原声那条已上线；翻译那条还没有收到画面。请在 OBS 的「多路推流」面板确认第二个目标已勾选" +
+            "「与 OBS 同步开始」，并且填的是第二个推流密钥。",
+            "The primary broadcast is live; the translated one is not receiving video. In the OBS " +
+            "multi-RTMP dock, check that the second target has \"sync start with OBS\" ticked and carries " +
+            "the second stream key."), Warn: true);
     }
 
     // ---------------------------------------------------------------- stop / cleanup
 
-    /// <summary>FR 4.3. OBS stops sending first, then the broadcast is transitioned to complete.</summary>
+    /// <summary>FR 4.3. The translator is stopped first, then OBS stops sending, then both broadcasts
+    /// are transitioned to complete.</summary>
     public async Task<StartOutcome> StopAsync(CancellationToken ct = default)
     {
         var broadcast = _state.Read(s => s.Broadcast);
+        var translated = _state.Read(s => s.Translated);
+
+        // Before OBS, so the last thing written to the virtual cable is not a half sentence that
+        // outlives the stream it belonged to.
+        try { await _translation.StopAsync().ConfigureAwait(false); }
+        catch (Exception ex) { _log.LogWarning(ex, "Stopping the translator failed"); }
 
         try
         {
@@ -354,6 +624,7 @@ public sealed class Orchestrator
                 {
                     if (s.Broadcast is not null) s.Broadcast.Status = BroadcastStatus.Complete;
                 });
+                await CompleteTranslatedAsync(translated, ct).ConfigureAwait(false);
                 _state.RecordAction(new Msg("停止直播（YouTube 未确认）", "Stopped (YouTube unconfirmed)"), broadcast.Title);
                 return new StartOutcome(false, null, new Msg(
                     "推流已停止，但 YouTube 那边没有确认结束。请稍后在 YouTube Studio 里确认这场已结束。",
@@ -364,8 +635,42 @@ public sealed class Orchestrator
             _state.Mutate(s => s.Broadcast!.Status = BroadcastStatus.Complete);
         }
 
+        var translatedEnded = await CompleteTranslatedAsync(translated, ct).ConfigureAwait(false);
+
         _state.RecordAction(new Msg("停止直播", "Stopped the broadcast"), broadcast?.Title);
-        return new StartOutcome(true, null, new Msg("直播已结束。", "The broadcast has ended."));
+
+        return translatedEnded
+            ? new StartOutcome(true, null, new Msg("直播已结束。", "The broadcast has ended."))
+            : new StartOutcome(true, null, new Msg(
+                "直播已结束，但翻译那条 YouTube 没有确认结束。请稍后在 YouTube Studio 里确认。",
+                "The broadcast has ended, but YouTube did not confirm the translated one finished. Check it " +
+                "in YouTube Studio later."));
+    }
+
+    /// <summary>Ends the translated broadcast. Its failure never changes the primary outcome.</summary>
+    private async Task<bool> CompleteTranslatedAsync(BroadcastState? translated, CancellationToken ct)
+    {
+        if (translated?.Id is null) return true;
+        if (translated.Status == BroadcastStatus.Complete) return true;
+
+        try
+        {
+            await _youtube.TransitionToCompleteAsync(translated.Id, ct).ConfigureAwait(false);
+            _state.Mutate(s =>
+            {
+                if (s.Translated is not null) s.Translated.Status = BroadcastStatus.Complete;
+            });
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Transitioning the translated broadcast {Id} to complete failed", translated.Id);
+            _state.Mutate(s =>
+            {
+                if (s.Translated is not null) s.Translated.Status = BroadcastStatus.Complete;
+            });
+            return false;
+        }
     }
 
     /// <summary>FR 4.4 one-click fix for the leftover-broadcast case.</summary>
@@ -374,12 +679,19 @@ public sealed class Orchestrator
         try
         {
             var unfinished = await _youtube.ListUnfinishedBroadcastsAsync(ct).ConfigureAwait(false);
-            var current = _state.Read(s => s.Broadcast?.Id);
+
+            // Both of this run's broadcasts are excluded, not just the primary one — otherwise the
+            // cleanup would end the translated broadcast it had created moments earlier.
+            var mine = _state.Read(s => new HashSet<string>(
+                new[] { s.Broadcast?.Id, s.Translated?.Id }
+                    .Where(id => !string.IsNullOrEmpty(id))
+                    .Select(id => id!),
+                StringComparer.Ordinal));
 
             var ended = 0;
             foreach (var broadcast in unfinished)
             {
-                if (broadcast.Id == current) continue;
+                if (mine.Contains(broadcast.Id)) continue;
 
                 try
                 {
@@ -429,11 +741,33 @@ public sealed class Orchestrator
         _state.Mutate(s =>
         {
             s.Broadcast = null;
+            s.Translated = null;
             s.Today = null;
             s.Steps = new List<StepState>();
             s.Telegram = new TelegramState();
+            s.Translation = new TranslationState();
         });
         return true;
+    }
+
+    /// <summary>
+    /// Operator-facing recovery for a translated stream that went silent mid-service — the one thing
+    /// they can usefully do about it without leaving the panel.
+    /// </summary>
+    public async Task<StartOutcome> RestartTranslationAsync(CancellationToken ct = default)
+    {
+        var today = _state.Read(s => s.Today);
+        var template = today?.TemplateId is null ? null : _config.FindTemplate(today.TemplateId);
+        var plan = TranslationPlan.For(_config.Settings, template);
+
+        if (!plan.Active)
+            return new StartOutcome(false, null, new Msg("本场没有开启翻译。", "Translation is not on for this service."));
+
+        var problem = await _translation.StartAsync(plan.TargetLanguage, ct).ConfigureAwait(false);
+        if (problem is not null) return new StartOutcome(false, null, problem);
+
+        _state.RecordAction(new Msg("重启 AI 翻译", "Restarted AI translation"), today?.Title);
+        return new StartOutcome(true, null, new Msg("翻译已重新连接。", "Translation reconnected."));
     }
 
     // ---------------------------------------------------------------- helpers

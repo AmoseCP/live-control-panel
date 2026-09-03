@@ -116,11 +116,32 @@
   <button class="ghost" id="btn-another" style="margin-top:12px" data-i18n="ended.another">开始另一场 →</button>
 </section>
 
+<!--
+  AI translation. Hidden entirely unless this service is bilingual, so a panel that never turned
+  translation on looks exactly as it did before the feature existed.
+-->
+<section id="translation-card" class="card hidden">
+  <h2><span data-i18n="translation.heading">AI 翻译</span> <span class="subtle" id="translation-lang"></span></h2>
+  <p class="subtle" style="margin:0"><span class="dot" id="dot-translation"></span><span id="translation-text">—</span></p>
+  <!-- The most recent translated line. Nothing depends on it; it is how a human confirms in one
+       glance that the second stream is saying something sensible rather than merely connected. -->
+  <p class="subtle" id="translation-transcript" style="margin:6px 0 0"></p>
+  <button class="ghost hidden" id="btn-translation-restart" style="margin-top:10px"
+          data-i18n="translation.restart">重新连接翻译</button>
+</section>
+
 <!-- link: available from broadcast creation onward, not only while live -->
 <section id="link-card" class="card hidden">
   <h2 data-i18n="link.heading">直播链接</h2>
+  <label id="link-label-primary" class="hidden" data-i18n="link.original">原声</label>
   <div class="linkbox" id="watch-url"></div>
   <button style="margin-top:10px" id="btn-copy" data-i18n="link.copy">复制链接</button>
+  <div id="translated-link-block" class="hidden" style="margin-top:16px">
+    <label id="link-label-translated" data-i18n="link.translated">翻译版</label>
+    <div class="linkbox" id="translated-watch-url"></div>
+    <button style="margin-top:10px" id="btn-copy-translated"
+            data-i18n="link.copyTranslated">复制翻译版链接</button>
+  </div>
   <p class="subtle" id="copy-hint" style="margin-bottom:0" data-i18n="link.hint">
     复制不成功时，可长按上面的地址手动复制。</p>
 </section>

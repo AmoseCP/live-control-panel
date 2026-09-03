@@ -1,6 +1,7 @@
 using LiveControlPanel.Config;
 using LiveControlPanel.Core;
 using LiveControlPanel.Slides;
+using LiveControlPanel.Translate;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace LiveControlPanel.Tests;
@@ -37,9 +38,13 @@ public sealed class TestHost : IDisposable
         Obs = new FakeObsClient();
         Telegram = new FakeTelegramClient();
 
-        Orchestrator = new Orchestrator(Config, State, YouTube, Obs, NullLogger<Orchestrator>.Instance);
+        Audio = new FakeAudioEngine();
+        Translation = new FakeTranslationService();
+
+        Orchestrator = new Orchestrator(
+            Config, State, YouTube, Obs, Translation, NullLogger<Orchestrator>.Instance);
         Notifications = new NotificationService(Config, State, Telegram);
-        Preflight = new Preflight(Config, Obs, YouTube, NullLogger<Preflight>.Instance);
+        Preflight = new Preflight(Config, Obs, YouTube, Audio, NullLogger<Preflight>.Instance);
     }
 
     public string Root { get; }
@@ -51,6 +56,8 @@ public sealed class TestHost : IDisposable
     public FakeYouTubeClient YouTube { get; }
     public FakeObsClient Obs { get; }
     public FakeTelegramClient Telegram { get; }
+    public FakeAudioEngine Audio { get; }
+    public FakeTranslationService Translation { get; }
     public Orchestrator Orchestrator { get; }
     public NotificationService Notifications { get; }
     public Preflight Preflight { get; }
@@ -66,6 +73,22 @@ public sealed class TestHost : IDisposable
             Title = title,
             ScheduledStart = new DateTime(2026, 8, 5, 18, 0, 0),
             Manual = true,
+        });
+
+    /// <summary>
+    /// Turns the bilingual path on the way a deployed panel would: the master switch plus the second
+    /// stream key and an API key, which is what <see cref="TranslationPlan"/> calls "ready".
+    /// </summary>
+    public void EnableTranslation(string targetLanguage = "en", string titleSuffix = " (English)") =>
+        Config.UpdateSettings(s =>
+        {
+            s.Translation.Enabled = true;
+            s.Translation.ApiKey = "test-key";
+            s.Translation.StreamId = "stream-2";
+            s.Translation.TargetLanguage = targetLanguage;
+            s.Translation.TitleSuffix = titleSuffix;
+            s.Translation.PlaybackDeviceId = "cable-1";
+            s.Translation.CaptureDeviceId = "mixer-1";
         });
 
     /// <summary>Writes a real file so the thumbnail step has something to upload.</summary>

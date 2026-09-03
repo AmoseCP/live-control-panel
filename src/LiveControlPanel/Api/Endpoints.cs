@@ -4,6 +4,7 @@ using LiveControlPanel.Config;
 using LiveControlPanel.Core;
 using LiveControlPanel.Net;
 using LiveControlPanel.Slides;
+using LiveControlPanel.Translate;
 using LiveControlPanel.Youtube;
 
 namespace LiveControlPanel.Api;
@@ -42,7 +43,8 @@ public sealed record SettingsPatch(
     ObsSettings? Obs,
     SlidesSettings? Slides,
     MatchWindowSettings? MatchWindow,
-    YouTubePatch? YouTube);
+    YouTubePatch? YouTube,
+    TranslationSettings? Translation);
 
 public sealed record YouTubePatch(string? ClientId, string? ClientSecret, int? AssumedValidityDays);
 
@@ -69,6 +71,7 @@ public static class Endpoints
         MapAccess(app);
         MapAuth(app);
         MapSettings(app);
+        MapTranslation(app);
         MapDiagnostics(app);
     }
 
@@ -78,9 +81,15 @@ public static class Endpoints
     {
         app.MapGet("/api/state", (StateManager state) => Results.Json(state.Snapshot(), Json.Options));
 
-        app.MapGet("/api/preflight", async (Preflight preflight, StateManager state, CancellationToken ct) =>
+        app.MapGet("/api/preflight", async (
+            Preflight preflight, ConfigStore config, StateManager state, CancellationToken ct) =>
         {
-            var items = await preflight.RunAsync(ct);
+            // The translated-broadcast check is per-service, so the checks need to know which
+            // service is on screen — a Sunday that opted out must not be told to fix a virtual cable.
+            var templateId = state.Read(s => s.Today?.TemplateId);
+            var template = templateId is null ? null : config.FindTemplate(templateId);
+
+            var items = await preflight.RunAsync(template, ct);
             state.Mutate(s => s.Preflight = items);
             return Results.Json(state.Snapshot(), Json.Options);
         });
@@ -355,6 +364,21 @@ public static class Endpoints
                     current.Slides = slides;
                 }
                 if (body.MatchWindow is not null) current.MatchWindow = body.MatchWindow;
+                if (body.Translation is { } translation)
+                {
+                    // The stream key is created through its own endpoint and must survive a save
+                    // that does not carry it — the settings page has no field that could resend it.
+                    if (string.IsNullOrWhiteSpace(translation.StreamId))
+                        translation.StreamId = current.Translation.StreamId;
+
+                    if (string.IsNullOrWhiteSpace(translation.Model))
+                        translation.Model = current.Translation.Model;
+
+                    if (string.IsNullOrWhiteSpace(translation.TargetLanguage))
+                        translation.TargetLanguage = "en";
+
+                    current.Translation = translation;
+                }
                 if (body.YouTube is { } yt)
                 {
                     current.YouTube.ClientId = yt.ClientId ?? current.YouTube.ClientId;
@@ -426,23 +450,45 @@ public static class Endpoints
             return Results.Json(new ApiResult(true, new Msg("场次已保存。", "Services saved.")), Json.Options);
         });
 
+        // slot=translation creates the SECOND reusable key, the one the obs-multi-rtmp target uses.
+        // Two keys are not a convenience: one liveStream can only back one live broadcast at a time,
+        // so the bilingual pair physically cannot share one.
         app.MapPost("/api/stream-key/create", async (
             IYouTubeClient youtube, ConfigStore config, AccessGate gate, HttpContext context,
-            CancellationToken ct) =>
+            string? slot, CancellationToken ct) =>
         {
             if (!gate.IsValidPin(context)) return PinRequired();
 
+            var translationSlot = string.Equals(slot, "translation", StringComparison.OrdinalIgnoreCase);
+
             try
             {
-                var key = await youtube.CreateReusableStreamAsync("Live Control Panel (reusable)", ct);
-                config.UpdateSettings(s => s.StreamId = key.StreamId);
+                var title = translationSlot
+                    ? "Live Control Panel (translated audio)"
+                    : "Live Control Panel (reusable)";
+
+                var key = await youtube.CreateReusableStreamAsync(title, ct);
+
+                if (translationSlot) config.UpdateSettings(s => s.Translation.StreamId = key.StreamId);
+                else config.UpdateSettings(s => s.StreamId = key.StreamId);
+
+                var message = translationSlot
+                    ? new Msg(
+                        "已创建翻译用推流密钥。请把下面的密钥填进 OBS「多路推流」里第二个目标的串流密钥，" +
+                        "并把该目标的视频编码器设为「与 OBS 主输出相同」、音轨设为翻译那一轨、勾选「与 OBS 同步开始/停止」。",
+                        "Created the stream key for the translated audio. Enter it in the second target of the " +
+                        "OBS multi-RTMP dock, set that target's video encoder to \"same as OBS output\", pick the " +
+                        "translation audio track, and tick sync start/stop with OBS.")
+                    : new Msg(
+                        "已创建推流密钥。请把下面的密钥填进 OBS 的「设置 → 推流 → 串流密钥」，此后不必再改。",
+                        "Stream key created. Enter the key below in OBS under Settings → Stream → Stream Key; " +
+                        "it never needs changing again.");
+
                 return Results.Json(new
                 {
                     ok = true,
-                    message = new Msg(
-                        "已创建推流密钥。请把下面的密钥填进 OBS 的「设置 → 推流 → 串流密钥」，此后不必再改。",
-                        "Stream key created. Enter the key below in OBS under Settings → Stream → Stream Key; " +
-                        "it never needs changing again."),
+                    message,
+                    slot = translationSlot ? "translation" : "primary",
                     streamId = key.StreamId,
                     ingestionKey = key.IngestionKey,
                     ingestionAddress = key.IngestionAddress,
@@ -453,6 +499,39 @@ public static class Endpoints
                 return Results.Json(new ApiResult(false, FriendlyError.Describe(ex)), Json.Options);
             }
         });
+    }
+
+    // ---------------------------------------------------------------- AI translation
+
+    private static void MapTranslation(WebApplication app)
+    {
+        // Device pickers. Behind the PIN: the list names every microphone in the building.
+        app.MapGet("/api/audio-devices", (IAudioEngine audio, AccessGate gate, HttpContext context) =>
+        {
+            if (!gate.IsValidPin(context)) return PinRequired();
+
+            return Results.Json(new
+            {
+                capture = audio.CaptureDevices(),
+                playback = audio.PlaybackDevices(),
+            }, Json.Options);
+        });
+
+        // Deploy-time verification. Four things have to line up — key, network, mixer endpoint,
+        // virtual cable — and every one of them fails silently as "the English stream had no sound".
+        app.MapPost("/api/translate/test", async (
+            ITranslationService translation, AccessGate gate, HttpContext context, CancellationToken ct) =>
+        {
+            if (!gate.IsValidPin(context)) return PinRequired();
+
+            var report = await translation.TestAsync(TimeSpan.FromSeconds(20), ct);
+            return Results.Json(report, Json.Options);
+        });
+
+        // Operator-facing recovery, reachable with the access code alone: this is the one useful
+        // thing to do about a translated stream that went silent, and it happens mid-service.
+        app.MapPost("/api/translate/restart", async (Orchestrator orchestrator, CancellationToken ct) =>
+            Outcome(await orchestrator.RestartTranslationAsync(ct)));
     }
 
     // ---------------------------------------------------------------- diagnostics

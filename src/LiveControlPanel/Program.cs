@@ -6,6 +6,7 @@ using LiveControlPanel.Net;
 using LiveControlPanel.Notify;
 using LiveControlPanel.Obs;
 using LiveControlPanel.Slides;
+using LiveControlPanel.Translate;
 using LiveControlPanel.Youtube;
 using Microsoft.Extensions.FileProviders;
 using Serilog;
@@ -86,6 +87,13 @@ public static class Program
         builder.Services.AddSingleton<IYouTubeClient, YouTubeClient>();
         builder.Services.AddSingleton<ObsClient>();
         builder.Services.AddSingleton<IObsClient>(sp => sp.GetRequiredService<ObsClient>());
+        // AI translation. Registered unconditionally but inert until switched on in settings: the
+        // audio devices are only opened when a translated broadcast actually starts, so a panel that
+        // has never been configured for it never touches a sound card.
+        builder.Services.AddSingleton<IAudioEngine, WasapiAudioEngine>();
+        builder.Services.AddSingleton<IGeminiSessionFactory, GeminiWebSocketSessionFactory>();
+        builder.Services.AddSingleton<TranslationService>();
+        builder.Services.AddSingleton<ITranslationService>(sp => sp.GetRequiredService<TranslationService>());
         builder.Services.AddSingleton<Preflight>();
         builder.Services.AddSingleton<Orchestrator>();
         builder.Services.AddSingleton<NotificationService>();
@@ -220,6 +228,16 @@ public sealed class PanelBackgroundService : BackgroundService
     private static readonly TimeSpan SlidePollInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan AuthPollInterval = TimeSpan.FromMinutes(30);
 
+    /// <summary>
+    /// How often the translated broadcast's own status is read while the service is on air.
+    ///
+    /// This is the only way the panel can see the second RTMP target at all: obs-multi-rtmp exposes
+    /// no obs-websocket interface, so if that output dies mid-sermon nothing local notices. YouTube
+    /// does — it ends a broadcast that stops receiving video — and one list call per half minute is
+    /// a rounding error against the daily quota.
+    /// </summary>
+    private static readonly TimeSpan TranslatedPollInterval = TimeSpan.FromSeconds(30);
+
     private readonly ObsClient _obs;
     private readonly StateManager _state;
     private readonly IYouTubeClient _youtube;
@@ -240,6 +258,7 @@ public sealed class PanelBackgroundService : BackgroundService
         _obs.Start();
 
         var lastAuthCheck = DateTime.MinValue;
+        var lastTranslatedCheck = DateTime.MinValue;
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -251,8 +270,59 @@ public sealed class PanelBackgroundService : BackgroundService
                 await RefreshAuthAsync(stoppingToken);
             }
 
+            if (DateTime.UtcNow - lastTranslatedCheck > TranslatedPollInterval)
+            {
+                lastTranslatedCheck = DateTime.UtcNow;
+                await RefreshTranslatedBroadcastAsync(stoppingToken);
+            }
+
             try { await Task.Delay(SlidePollInterval, stoppingToken); }
             catch (OperationCanceledException) { return; }
+        }
+    }
+
+    /// <summary>
+    /// Follows the translated broadcast while the primary one is on air. A transition to complete on
+    /// YouTube's side means the second RTMP target stopped sending — the plugin was never started,
+    /// its key is wrong, or it dropped — and that is worth saying on the panel while there is still
+    /// a service left to fix it for.
+    /// </summary>
+    private async Task RefreshTranslatedBroadcastAsync(CancellationToken ct)
+    {
+        var (translatedId, translatedStatus, primaryLive) = _state.Read(s => (
+            s.Translated?.Id,
+            s.Translated?.Status,
+            s.Broadcast?.Status is BroadcastStatus.Live or BroadcastStatus.Testing || s.Obs.Streaming));
+
+        if (translatedId is null || !primaryLive) return;
+        if (translatedStatus == BroadcastStatus.Complete) return;
+
+        try
+        {
+            var status = await _youtube.GetLifeCycleStatusAsync(translatedId, ct);
+            if (status is null) return;
+
+            var mapped = status switch
+            {
+                "live" => BroadcastStatus.Live,
+                "testing" => BroadcastStatus.Testing,
+                "complete" or "revoked" => BroadcastStatus.Complete,
+                _ => null,
+            };
+
+            if (mapped is null || mapped == translatedStatus) return;
+
+            _state.Mutate(s =>
+            {
+                if (s.Translated is not null) s.Translated.Status = mapped;
+            });
+
+            if (mapped == BroadcastStatus.Complete)
+                _log.LogWarning("The translated broadcast {Id} ended while the service is still live", translatedId);
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "Polling the translated broadcast failed");
         }
     }
 

@@ -118,9 +118,11 @@ public sealed class StateManager
             && !_state.Obs.Streaming)
         {
             _state.Broadcast = null;
+            _state.Translated = null;
             _state.Today = null;
             _state.Steps = new List<StepState>();
             _state.Telegram = new TelegramState();
+            _state.Translation = new TranslationState();
         }
         else if (_state.Today?.ScheduledStart is { } scheduled && scheduled.Date < now.Date
             && _state.Broadcast is null && _state.Today.Manual)
@@ -164,6 +166,25 @@ public sealed class StateManager
         }
 
         _state.Phase = DerivePhase();
+        RefreshTranslationPlanLocked();
+    }
+
+    /// <summary>
+    /// Keeps "is this service bilingual, and in what language" on the pushed state at all times, not
+    /// only once a run has started. The operator page shows the second broadcast's affordances from
+    /// this, so it has to be right while the panel is still sitting on Ready — a panel that promises
+    /// bilingual and then creates one broadcast is the kind of surprise nobody is there to explain.
+    ///
+    /// Only the planned fields are written here. Everything else on TranslationState is live health,
+    /// owned by the translator itself.
+    /// </summary>
+    private void RefreshTranslationPlanLocked()
+    {
+        var template = _state.Today?.TemplateId is { } id ? _config.FindTemplate(id) : null;
+        var plan = TranslationPlan.For(_config.Settings, template);
+
+        _state.Translation.Enabled = plan.Active;
+        _state.Translation.TargetLanguage = plan.Active ? plan.TargetLanguage : null;
     }
 
     private string DerivePhase()

@@ -1,11 +1,12 @@
 using LiveControlPanel.Config;
 using LiveControlPanel.Obs;
+using LiveControlPanel.Translate;
 using LiveControlPanel.Youtube;
 
 namespace LiveControlPanel.Core;
 
 /// <summary>
-/// The five pre-start checks of FR 4.4.
+/// The pre-start checks of FR 4.4, plus one for the AI-translated second broadcast.
 ///
 /// Two rules shape everything here:
 /// a failing check never blocks going live — in an emergency the stream matters more than the
@@ -23,17 +24,25 @@ public sealed class Preflight
     private readonly ConfigStore _config;
     private readonly IObsClient _obs;
     private readonly IYouTubeClient _youtube;
+    private readonly IAudioEngine _audio;
     private readonly ILogger<Preflight> _log;
 
-    public Preflight(ConfigStore config, IObsClient obs, IYouTubeClient youtube, ILogger<Preflight> log)
+    public Preflight(
+        ConfigStore config,
+        IObsClient obs,
+        IYouTubeClient youtube,
+        IAudioEngine audio,
+        ILogger<Preflight> log)
     {
         _config = config;
         _obs = obs;
         _youtube = youtube;
+        _audio = audio;
         _log = log;
     }
 
-    public async Task<List<PreflightItem>> RunAsync(CancellationToken ct = default)
+    public async Task<List<PreflightItem>> RunAsync(
+        ServiceTemplate? template = null, CancellationToken ct = default)
     {
         var items = new List<PreflightItem>
         {
@@ -43,6 +52,11 @@ public sealed class Preflight
             await CheckAuthAsync(ct).ConfigureAwait(false),
             await CheckVideoAsync(ct).ConfigureAwait(false),
         };
+
+        // Only when this service is actually bilingual. A church that never switched translation on
+        // must not grow a sixth checklist row it has no way to satisfy.
+        var plan = TranslationPlan.For(_config.Settings, template);
+        if (plan.Active) items.Add(await CheckTranslationAsync(plan, ct).ConfigureAwait(false));
 
         return items;
     }
@@ -289,6 +303,105 @@ public sealed class Preflight
                 "Ask the administrator to check the names on the settings page."));
 
         return Ok("video", ("画面正常。", "Video is fine."));
+    }
+
+    /// <summary>
+    /// The translated broadcast's own readiness. It never blocks going live — nothing here does —
+    /// but the four things that silently break it are all invisible from the operator page: a
+    /// missing API key, a missing second stream key, a virtual cable that Windows forgot, and a
+    /// mixer endpoint that changed id when it was re-plugged.
+    /// </summary>
+    private async Task<PreflightItem> CheckTranslationAsync(TranslationPlan plan, CancellationToken ct)
+    {
+        var translation = _config.Settings.Translation;
+
+        if (string.IsNullOrWhiteSpace(translation.ApiKey))
+            return Fail("translation", (
+                "本场要出翻译流，但还没有填 Gemini API Key。请让管理员在设置页填写，" +
+                "否则英文那条会全程无声。",
+                "This service is set to produce a translated stream, but no Gemini API key is configured. " +
+                "Ask the administrator to enter one on the settings page, or the translated stream will be " +
+                "silent throughout."));
+
+        if (string.IsNullOrWhiteSpace(translation.StreamId))
+            return Fail("translation", (
+                "本场要出翻译流，但还没有创建第二条推流密钥。请让管理员在设置页点「创建翻译用推流密钥」，" +
+                "并把它填进 OBS 的多路推流目标。",
+                "This service is set to produce a translated stream, but the second stream key has not been " +
+                "created. Ask the administrator to create it on the settings page and enter it in the OBS " +
+                "multi-RTMP target."));
+
+        if (DeviceProblem(translation) is { } deviceProblem) return Fail("translation", deviceProblem);
+
+        if (!string.IsNullOrWhiteSpace(translation.ObsInputName))
+        {
+            if (!_obs.Status.Connected)
+                return Fail("translation", (
+                    "无法检查翻译音轨，因为 OBS 没有连上。请先打开 OBS。",
+                    "Cannot check the translated audio track because OBS is not connected. Open OBS first."));
+
+            IReadOnlyList<string> inputs;
+            try
+            {
+                inputs = await _obs.GetInputNamesAsync(ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _log.LogDebug(ex, "Listing OBS inputs for the translation check failed");
+                inputs = Array.Empty<string>();
+            }
+
+            if (!inputs.Any(i => string.Equals(i, translation.ObsInputName, StringComparison.OrdinalIgnoreCase)))
+                return Fail("translation", (
+                    $"OBS 里找不到名为「{translation.ObsInputName}」的翻译音频源。" +
+                    "它应该是一个「音频输入采集」，设备选虚拟声卡的 CABLE Output，" +
+                    $"并且在高级音频属性里只勾音轨 {translation.ObsAudioTrack}。",
+                    $"OBS has no audio source called \"{translation.ObsInputName}\" for the translation. It " +
+                    "should be an Audio Input Capture on the virtual cable's CABLE Output, routed to track " +
+                    $"{translation.ObsAudioTrack} only in Advanced Audio Properties."));
+        }
+
+        return Ok("translation", (
+            $"翻译已就绪（目标语言 {plan.TargetLanguage}）。",
+            $"Translation is ready (target language {plan.TargetLanguage})."));
+    }
+
+    /// <summary>
+    /// Both endpoints are checked by id against what Windows currently reports. A device that was
+    /// re-plugged into another USB port comes back with a different id, and the symptom — a stream
+    /// that is silent in one language only — is not one an operator can diagnose alone.
+    /// </summary>
+    private Msg? DeviceProblem(TranslationSettings translation)
+    {
+        if (!string.IsNullOrWhiteSpace(translation.CaptureDeviceId)
+            && !_audio.CaptureDevices().Any(d => d.Id == translation.CaptureDeviceId))
+        {
+            return new Msg(
+                "找不到设置里选的翻译采集设备（应该是调音台那个录音设备）。" +
+                "请确认调音台已开机、USB 线插在原来的口上，然后在设置页重新选一次。",
+                "The recording device selected for translation (the mixer) is missing. Check that the mixer " +
+                "is powered on and its USB cable is in the same port as before, then pick the device again " +
+                "on the settings page.");
+        }
+
+        if (string.IsNullOrWhiteSpace(translation.PlaybackDeviceId))
+        {
+            return new Msg(
+                "还没有选翻译语音的播放设备。请在设置页选虚拟声卡的 CABLE Input。",
+                "No playback device is selected for the translated voice. Choose the virtual cable's CABLE " +
+                "Input on the settings page.");
+        }
+
+        if (!_audio.PlaybackDevices().Any(d => d.Id == translation.PlaybackDeviceId))
+        {
+            return new Msg(
+                "找不到设置里选的虚拟声卡（CABLE Input）。请确认 VB-CABLE 还装着，" +
+                "然后在设置页重新选一次。",
+                "The virtual cable selected for the translated voice (CABLE Input) is missing. Check that " +
+                "VB-CABLE is still installed, then pick it again on the settings page.");
+        }
+
+        return null;
     }
 
     private static PreflightItem Ok(string key, Msg message) => new() { Key = key, Ok = true, Message = message };

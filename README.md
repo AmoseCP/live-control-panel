@@ -2,13 +2,15 @@
 
 教会直播电脑上的本地服务，给非技术操作员一个极简的直播控制界面。
 
-它做三件事：
+它做四件事：
 
 1. 通过 **YouTube Data API v3** 建播、绑定推流密钥、上传封面、结束直播
 2. 通过 **obs-websocket v5** 控制 OBS Studio 推流与场景切换
 3. 通过 **Win32 API** 控制 WPS 演示翻页 —— 操作员在 iPad 上没有键盘，这是 iPad 方案成立的前提
+4. 可选：把调音台原声实时送进 **Gemini 实时翻译**，生成第二条语音，同一画面出两条直播（原声 / 译音）
 
 它**不做**采集、编码、推流（由 OBS 承担）。面板只是遥控器：**关掉面板不会中断正在进行的直播。**
+双语是同一条原则的延伸：**翻译坏掉不影响原声那条直播。**
 
 ---
 
@@ -28,7 +30,7 @@
 
 ```bash
 # 需要 .NET 8 SDK
-dotnet test                                    # 297 个单元/接口测试
+dotnet test                                    # 402 个单元/接口测试
 dotnet run --project src/LiveControlPanel       # 默认 http://localhost:5088
 ```
 
@@ -91,6 +93,8 @@ src/LiveControlPanel/
                       NotificationService, StateHub, FriendlyError, RuntimeState
   Youtube/            YouTubeAuth, YouTubeClient, DpapiDataStore, Retry
   Obs/                ObsClient（原始 WebSocket）, ObsProtocol
+  Translate/          GeminiProtocol, GeminiSession, TranslationService,
+                      Audio（抽象）, WasapiAudioEngine（NAudio/WASAPI）
   Slides/             SlideController, Win32, WpsCom
   Notify/             TelegramClient
   Net/                AccessInfoProvider（局域网地址 + 二维码）
@@ -110,6 +114,65 @@ tests/LiveControlPanel.Tests/
 **前端不轮询。** 状态变化由服务端经 `/ws` 推送；iPad 锁屏唤醒后自动重连。
 
 **数据目录在 `%ProgramData%`，不在用户配置目录。** 服务账户对用户目录的访问不可靠。
+
+---
+
+## 双语直播：同一画面，两条语音
+
+可选功能，**默认关闭**。开启后，每场直播建**两条** YouTube 直播：一条走调音台原声，一条走 Gemini 实时翻译生成的人声。画面只编码一次。
+
+```
+                    ┌──── 视频编码器（唯一一份）────┐
+摄像机 ──→ OBS ─────┤                              │
+                    └──────────────┬───────────────┘
+                                   │
+                     ┌─────────────┴─────────────┐
+                  音轨1 原声                  音轨2 译音
+                     │                           │
+                     ▼                           ▼
+                  Mux #1                      Mux #2
+              （OBS 主推流）            （obs-multi-rtmp 目标）
+                     │                           │
+                     ▼                           ▼
+            YouTube 直播 A                YouTube 直播 B
+              （原声）                      （译音）
+```
+
+译音那一路的声音链路全在这台 PC 内部：
+
+```
+调音台 USB（OBS 也在采的那个录音设备）
+  → 面板 WASAPI 共享模式采集 → 降混单声道、重采样 16 kHz
+  → Gemini Live（BidiGenerateContent，WebSocket）
+  → 返回 24 kHz PCM → 播到 VB-CABLE 的 CABLE Input
+  → OBS 以「音频输入采集 → CABLE Output」拿回来，只路由到音轨 2
+```
+
+### 五个决定了整块设计的取舍
+
+**面板仍然只调一次 `StartStream`。** obs-multi-rtmp 的第二个目标勾「与 OBS 同步开始/停止」，由插件自己跟随主推流。这不是省事：上游插件**没有** obs-websocket vendor 接口（只有第三方 fork 有），面板无法单独启停它。与其依赖一个 fork，不如让面板少管一路输出——也就没有第二路输出会和主路走失。
+
+**代价是面板看不见第二路输出，所以改由 YouTube 侧观测。** 后台每 30 秒读一次译音那条 broadcast 的 lifecycle 状态：第二路断了，YouTube 会先把那条直播结束，面板据此报「翻译流已断」并指向 OBS 多路推流面板。一次 list 调用 1 个配额单位，对每天 10000 的额度是零头。
+
+**视频编码器共用，不是编两次。** 插件的 Video Settings 选「与 OBS 主输出相同」（Get from OBS），CPU 开销不翻倍。凌晨那台机器要同时跑采集、编码和 WPS 放映，双份编码不是可选项。
+
+**必须两个推流密钥。** 一个 `liveStream` 同一时刻只能绑一条进行中的 broadcast，所以两条直播物理上无法共用一个密钥。设置页分别创建，各填一次，此后不动。
+
+**中英不定用 `echoTargetLanguage` 解决，不是两条译音流。** 讲员可能讲中文也可能讲英文，甚至一场里换。会话配置里目标语言固定（每个场次可配），`echoTargetLanguage: true` 让「讲的已经是目标语言」的段落原样透传而不是静音。所以一个 Gemini 会话就够：目标语言设 `en` 时第二条流永远是英文，设 `zh-CN` 时永远是中文。源语言由模型自动识别，不需要指定。
+
+### 翻译不影响原声，是被测出来的，不是被声称的
+
+开播序列里翻译占第 4 步（在开始推流之前，让音轨 2 从第一帧就有内容）。这一步以及创建、绑定、封面里所有与译音相关的失败，状态都是 **`warn`** 而不是 `failed`：不中断序列、不提供「重试这一步」、服务照常上线，译音那条静音。`DualBroadcastTests` 逐条钉住了这些路径——翻译服务拒绝启动、抛异常、第二条建播失败、绑定失败、封面失败、译音那条始终不上线，每一条都断言 `outcome.Ok` 且原声那条 `live`。
+
+反过来也钉住了：`EndPreviousAsync` 的遗留清理会排除**本场的两条** broadcast，否则它会把几分钟前自己创建的译音那条结束掉。
+
+### 现场配置要点
+
+面板设置页「AI 翻译」一段：开关、Gemini API Key、目标语言、标题后缀、采集设备、播放设备（**必须是 CABLE Input，绝不能选调音台的播放端**——那会把译音送进 PA 再混回原声流）、第二条推流密钥、以及一个 20 秒的链路测试。
+
+OBS 侧三件事：`obs-multi-rtmp` 第二个目标（共用视频编码器 + 音轨 2 + 同步启停 + 第二个密钥）、`音频输入采集 → CABLE Output` 这个源、高级音频属性里把调音台只勾音轨 1、把 CABLE Output 只勾音轨 2。逐步操作见 `docs/DEPLOYMENT.md`。
+
+每个场次可以单独关掉翻译（`templates.json` 的 `translate`），也可以单独指定目标语言（`targetLanguage`）——中文讲道那场出英文、英文讲道那场出中文，用的是同一台面板同一个摄像机。
 
 ---
 
@@ -237,7 +300,7 @@ sunday-service    [0]         10:30  → 1
 
 ## 测试
 
-297 个测试，全部不接触真实的 YouTube / OBS / Telegram。
+402 个测试，全部不接触真实的 YouTube / OBS / Telegram / Gemini，也不碰声卡。
 
 ```bash
 dotnet test
@@ -247,7 +310,7 @@ dotnet test
 | --- | --- |
 | `ScheduleMatcherTests` | 开发计划 M1.3 的全部判据表 + 时间窗边界 + 早到/迟到容错 + 一日两场窗口不重叠 + 标题不补零 |
 | `OrchestratorTests` | 幂等（连点 5 次 / 并发 5 次）、失败可从该步重试、停播、一日两场 |
-| `PreflightTests` | 五项自检的每条分支；OBS 三种失败原因各给对应处置；自检失败**不阻断**开播 |
+| `PreflightTests` | 五项自检的每条分支；OBS 三种失败原因各给对应处置；自检失败**不阻断**开播；双语场次多出的第六项只在该场次真的双语时出现 |
 | `NotificationTests` | Telegram 幂等、失败可重试、模板渲染 |
 | `ConfigStoreTests` | 种子数据、删目录后重建、损坏文件降级、访问码生成 |
 | `StateManagerTests` | 四相位状态机、快照深拷贝、并发安全 |
@@ -257,6 +320,11 @@ dotnet test
 | `SettingsPinTests` | PIN 为固定默认值、两台安装 PIN 相同但访问码不同、改过的 PIN 不被重置 |
 | `LocalizationTests` | 每条自检/步骤/错误/Telegram/幻灯片消息都有中英双语、两者不同、英文侧不含汉字 |
 | `EndpointTests`（幻灯片部分） | 预览返回 PNG、COM 不可用时 404、显式页码透传、访问码门禁、诊断接口需 PIN |
+| `DualBroadcastTests` | 双建播/双绑定/双封面、标题后缀、只调一次 `StartStream`、译音那条各种失败都只 `warn` 且原声照常上线、遗留清理排除本场两条、Telegram 带两个链接 |
+| `TranslationServiceTests` | 会话生命周期、断线重连与 `goAway` 立即重连、译音写进虚拟声卡、缺 Key/缺播放设备时拒绝启动且不碰声卡、设备中途掉线上报、20 秒链路测试的三种结论 |
+| `GeminiProtocolTests` | setup 报文（含 `translationConfig`、不声明源语言）、音频分片格式、多段音频按序拼接、坏帧/非 JSON 帧不致命 |
+| `TranslationPlanTests` | 总开关与单场次开关、目标语言的场次级覆盖、`ready` 需要第二个密钥与 API Key、译音标题必与原声不同 |
+| `TranslationAudioTests` | 峰值电平（含 `short.MinValue` 不溢出成负数）、WASAPI 不定长块重新分帧不丢音 |
 
 ### 已验证的行为
 
@@ -302,7 +370,7 @@ dotnet test
 | GET | `/api/state` | 完整状态快照 |
 | WS | `/ws` | 状态推送 |
 | GET | `/api/preflight` | 触发一次自检 |
-| POST | `/api/broadcast/start-today` | 一键开播编排（六步，幂等） |
+| POST | `/api/broadcast/start-today` | 一键开播编排（七步，幂等） |
 | POST | `/api/broadcast/retry/{step}` | 从指定步骤重试 |
 | POST | `/api/broadcast/create` | 手动建播（模板 / 日期 / 标题覆盖） |
 | POST | `/api/broadcast/stop` | 结束直播（需 `confirm: true`） |
@@ -315,7 +383,10 @@ dotnet test
 | GET | `/api/access-info` | 局域网地址、mDNS 名、二维码 |
 | GET | `/auth/start` \| `/auth/callback` | OAuth 授权 |
 | GET/PUT | `/api/settings` \| `/api/templates` | 设置（需 PIN） |
-| POST | `/api/stream-key/create` | 创建可复用推流密钥（一次性，需 PIN） |
+| POST | `/api/stream-key/create` | 创建可复用推流密钥（一次性，需 PIN）；`?slot=translation` 创建译音那条用的第二个密钥 |
+| GET | `/api/audio-devices` | 列出录音/播放设备，供设置页选采集设备与虚拟声卡（需 PIN） |
+| POST | `/api/translate/test` | 20 秒实链路测试，返回听到的原话与翻译结果（需 PIN） |
+| POST | `/api/translate/restart` | 直播中重连翻译（只需访问码——这是译音静音时操作员唯一有用的动作） |
 | GET | `/api/diag/windows` | 枚举顶层窗口，用于确定 WPS 放映窗口（需 PIN） |
 | GET | `/api/diag/slides` | 会话号、COM 可用性、当前/总页数、预览是否可用（需 PIN） |
 | GET | `/api/diag/com-probe` | 逐个成员走完自动化对象链，指出断在哪一步（需 PIN） |
@@ -342,6 +413,14 @@ dotnet test
    若在中途断掉，翻页会退回按键 —— 此时必须在设置页「列出所有窗口」里选中放映窗口填入类名，
    并实测按 `PostMessage` 能否真的翻页，不行就把 `strategy` 改成 `SendInput`（会短暂抢焦点）
 10. 设置页填 `obs.videoSourceNames`（采集卡、电视采集源的名字），让 `video` 自检生效
+
+**双语（不做双语可整段跳过）**
+
+10a. 装 **VB-CABLE**（免费虚拟声卡）与 **obs-multi-rtmp** 插件，重启 OBS
+10b. 设置页「创建翻译用推流密钥」→ 填进 obs-multi-rtmp 第二个目标；该目标视频编码器选**「与 OBS 主输出相同」**、音频选**音轨 2**、勾**「与 OBS 同步开始/停止」**
+10c. OBS 加源「音频输入采集 → CABLE Output」；高级音频属性里调音台只勾**音轨 1**、CABLE Output 只勾**音轨 2**
+10d. 设置页「AI 翻译」：填 Gemini API Key、目标语言、采集设备（调音台那个录音设备）、播放设备（**CABLE Input**，绝不能选调音台的播放端）
+10e. 点「测试翻译链路」，对麦讲几句，确认返回了听到的原话与翻译结果
 
 **系统配套**
 

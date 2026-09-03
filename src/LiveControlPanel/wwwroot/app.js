@@ -118,6 +118,12 @@
     // FR 6.1: the broadcast id exists from creation onward, so the link is not gated on Live.
     L.show('link-card', !!(broadcast && broadcast.watchUrl));
 
+    // Everything about translation is gated on this service actually being bilingual — a panel that
+    // never switched it on shows nothing about it anywhere.
+    var translation = state.translation || {};
+    L.show('translation-card',
+      !!translation.enabled && (phase === 'Live' || phase === 'Ready' || !!state.starting));
+
     if (state.today) {
       L.text('ready-title', state.today.title);
       L.text('ready-time', state.today.scheduledStart
@@ -130,6 +136,7 @@
     if (phase === 'NoSchedule') renderNoSchedule();
 
     if (broadcast && broadcast.watchUrl) L.text('watch-url', broadcast.watchUrl);
+    renderTranslatedLink();
 
     renderMetrics();
     renderPreflight();
@@ -138,6 +145,58 @@
     renderSlides();
     renderStatus();
     renderTelegramButton();
+    renderTranslation();
+  }
+
+  /*
+   * Two unlisted videos means two links, and the second one is useless without a label saying which
+   * is which. The labels only appear when there is actually something to disambiguate.
+   */
+  function renderTranslatedLink() {
+    var translated = state.translated;
+    var has = !!(translated && translated.watchUrl);
+
+    L.show('translated-link-block', has);
+    L.show('link-label-primary', has);
+    if (has) L.text('translated-watch-url', translated.watchUrl);
+  }
+
+  /*
+   * Translation health. "Connected" is deliberately not the headline: a session can be up and
+   * producing nothing, and what the congregation experiences is whether audio is arriving. The
+   * worst case — YouTube ended the translated broadcast while this one is still on air — means the
+   * second RTMP target stopped sending, which is an OBS-side problem this panel cannot fix but can
+   * at least name.
+   */
+  function renderTranslation() {
+    var tr = state.translation || {};
+    var translated = state.translated;
+
+    L.text('translation-lang', tr.targetLanguage ? '→ ' + tr.targetLanguage : '');
+    L.text('translation-transcript', tr.lastTranscript || '');
+
+    var status = translationStatus(tr, translated);
+
+    var dot = document.getElementById('dot-translation');
+    if (dot) dot.className = 'dot ' + status.dot;
+    L.text('translation-text', status.text);
+
+    L.show('btn-translation-restart', status.dot !== 'ok' && state.phase === 'Live');
+  }
+
+  function translationStatus(tr, translated) {
+    if (translated && translated.status === 'complete' && state.phase === 'Live') {
+      return { dot: 'bad', text: t('translation.dropped') };
+    }
+    if (tr.lastError) return { dot: 'bad', text: pick(tr.lastError) };
+    if (!tr.running) return { dot: 'warn', text: t('translation.idle') };
+    if (!tr.connected) return { dot: 'warn', text: t('translation.connecting') };
+
+    // Silence is normal between sentences; a full minute of it is not.
+    var since = tr.lastAudioAt ? (new Date(state.serverTime) - new Date(tr.lastAudioAt)) : null;
+    if (since === null || since > 60000) return { dot: 'warn', text: t('translation.silent') };
+
+    return { dot: 'ok', text: t('translation.ok') };
   }
 
   /*
@@ -502,6 +561,20 @@
     if (state && state.broadcast && state.broadcast.watchUrl) L.copyText(state.broadcast.watchUrl);
   });
 
+  L.on('btn-copy-translated', function () {
+    if (state && state.translated && state.translated.watchUrl) L.copyText(state.translated.watchUrl);
+  });
+
+  L.on('btn-translation-restart', function () {
+    var button = document.getElementById('btn-translation-restart');
+    if (button) button.disabled = true;
+
+    L.api.post('/api/translate/restart').then(function (result) {
+      if (button) button.disabled = false;
+      report(result);
+    });
+  });
+
   L.on('btn-next', function () { L.api.post('/api/slides/next').then(quietReport); });
   L.on('btn-prev', function () { L.api.post('/api/slides/prev').then(quietReport); });
 
@@ -624,7 +697,7 @@
     L.show('access-error', true);
 
     ['phase-noschedule', 'phase-ready', 'phase-live', 'phase-ended', 'progress-card',
-      'preflight-card', 'scene-card', 'slides-card', 'link-card', 'picker-card', 'status-card',
-      'offline'].forEach(function (id) { L.show(id, false); });
+      'preflight-card', 'scene-card', 'slides-card', 'link-card', 'translation-card', 'picker-card',
+      'status-card', 'offline'].forEach(function (id) { L.show(id, false); });
   }
 })();

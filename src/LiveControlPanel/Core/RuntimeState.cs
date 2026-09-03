@@ -84,6 +84,42 @@ public sealed class SlidesState
     public int? Total { get; set; }
 }
 
+/// <summary>
+/// The AI translator's live health, pushed to the operator page so a silent second broadcast is
+/// visible while it can still be fixed — never blocking, never touching the primary stream.
+/// </summary>
+public sealed class TranslationState
+{
+    /// <summary>Translation is switched on in settings AND this service opts into it.</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>The audio devices are open and a session has been asked for.</summary>
+    public bool Running { get; set; }
+
+    /// <summary>The Gemini session is up and has acknowledged setup.</summary>
+    public bool Connected { get; set; }
+
+    /// <summary>BCP-47 code the second broadcast is speaking, for this service.</summary>
+    public string? TargetLanguage { get; set; }
+
+    /// <summary>
+    /// When translated audio was last written to the virtual cable. This — not "connected" — is what
+    /// says the English stream has sound: a session can be up and producing nothing.
+    /// </summary>
+    public DateTime? LastAudioAt { get; set; }
+
+    /// <summary>Peak (0..1) of what is being sent to the model, so a dead mixer feed is visible.</summary>
+    public double InputPeak { get; set; }
+
+    /// <summary>Peak (0..1) of what is being played into the cable.</summary>
+    public double OutputPeak { get; set; }
+
+    /// <summary>Most recent translated line, purely so a human can confirm it is translating sense.</summary>
+    public string? LastTranscript { get; set; }
+
+    public Msg? LastError { get; set; }
+}
+
 public sealed class TelegramState
 {
     public DateTime? SentAt { get; set; }
@@ -113,7 +149,14 @@ public sealed class StepState
     public int Step { get; set; }
     public Msg Name { get; set; } = Msg.Empty;
 
-    /// <summary>pending | running | done | skipped | failed</summary>
+    /// <summary>
+    /// pending | running | done | skipped | warn | failed.
+    ///
+    /// "warn" exists for the translation step alone: it did not do what it was asked, but the
+    /// service must still go on air. Unlike "failed" it does not stop the sequence and does not
+    /// offer a retry — the operator fixes it from the live card, or lets the English stream run
+    /// silent.
+    /// </summary>
     public string Status { get; set; } = "pending";
 
     public Msg? Message { get; set; }
@@ -133,6 +176,15 @@ public sealed class RuntimeState
     public TodayState? Today { get; set; }
     public NextServiceState? NextService { get; set; }
     public BroadcastState? Broadcast { get; set; }
+
+    /// <summary>
+    /// The second, AI-translated broadcast. Null whenever translation is off for this service — the
+    /// UI keys every translation affordance on this being present, so an unconfigured panel shows
+    /// nothing about translation at all.
+    /// </summary>
+    public BroadcastState? Translated { get; set; }
+
+    public TranslationState Translation { get; set; } = new();
     public ObsState Obs { get; set; } = new();
     public SlidesState Slides { get; set; } = new();
     public TelegramState Telegram { get; set; } = new();

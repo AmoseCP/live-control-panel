@@ -199,6 +199,7 @@ button.ghost { background: transparent; min-height: 48px; font-weight: 500; colo
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
 .dot.ok { background: var(--ok); }
 .dot.bad { background: var(--bad); }
+.dot.warn { background: var(--warn); }
 
 .check { display: flex; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); align-items: flex-start; }
 .check:first-child { border-top: 0; }
@@ -228,6 +229,10 @@ button.ghost { background: transparent; min-height: 48px; font-weight: 500; colo
 
 /* The failed step is the one line the operator must find; give it a quiet highlight. */
 .steps li.failed { background: rgba(207, 68, 68, 0.10); }
+/* The translation step is the only one that can warn: it did not do its job, the service went on
+   air regardless. Amber rather than red, and no retry button — see Orchestrator.StepMessage. */
+.steps li.warn .mark { color: var(--warn); }
+.steps li.warn { background: rgba(201, 138, 26, 0.12); }
 .steps li.running { font-weight: 600; }
 
 /* Picker rows: service name left, start time right, so the times line up as a column. */

@@ -39,6 +39,16 @@
     <PackageReference Include="Google.Apis.YouTube.v3" Version="1.68.0.3539" />
     <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="8.0.11" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
+    <!--
+      WASAPI capture and playback for the AI-translated audio track. Managed code over the Windows
+      Core Audio APIs, so it survives single-file publish without native payloads.
+
+      The two component packages, not the "NAudio" meta-package: that one also pulls in
+      NAudio.WinForms, whose WindowsForms framework reference this project has no use for — it makes
+      the exe larger and stops the project building anywhere but Windows.
+    -->
+    <PackageReference Include="NAudio.Core" Version="2.2.1" />
+    <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
     <PackageReference Include="QRCoder" Version="1.6.0" />
     <PackageReference Include="Serilog.AspNetCore" Version="8.0.3" />
     <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />

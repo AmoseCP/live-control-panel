@@ -7,6 +7,7 @@ using LiveControlPanel.Net;
 using LiveControlPanel.Notify;
 using LiveControlPanel.Obs;
 using LiveControlPanel.Slides;
+using LiveControlPanel.Translate;
 using LiveControlPanel.Youtube;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -57,6 +58,8 @@ public sealed class EndpointTests : IAsyncLifetime
         builder.Services.AddSingleton<IYouTubeClient>(_fixtures.YouTube);
         builder.Services.AddSingleton<IObsClient>(_fixtures.Obs);
         builder.Services.AddSingleton<ITelegramClient>(_fixtures.Telegram);
+        builder.Services.AddSingleton<IAudioEngine>(_fixtures.Audio);
+        builder.Services.AddSingleton<ITranslationService>(_fixtures.Translation);
         builder.Services.AddSingleton(_fixtures.Preflight);
         builder.Services.AddSingleton(_fixtures.Orchestrator);
         builder.Services.AddSingleton(_fixtures.Notifications);
@@ -102,6 +105,7 @@ public sealed class EndpointTests : IAsyncLifetime
                      "/auth/start", "/auth/callback",
                      "/api/settings", "/api/templates",
                      "/api/stream-key/create",
+                     "/api/audio-devices", "/api/translate/test", "/api/translate/restart",
                      "/api/diag/windows",
                  })
         {
@@ -188,7 +192,9 @@ public sealed class EndpointTests : IAsyncLifetime
     [Fact]
     public async Task An_out_of_range_retry_step_is_rejected()
     {
-        foreach (var step in new[] { 0, 7, 99 })
+        // Bounds come from the constants rather than literals: the sequence grew by a step when the
+        // translated broadcast was added, and a hard-coded 7 quietly turned into a valid request.
+        foreach (var step in new[] { 0, Orchestrator.StepAwaitLive + 1, 99 })
         {
             var response = await _client.PostAsync($"/api/broadcast/retry/{step}?k={_code}", null);
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
