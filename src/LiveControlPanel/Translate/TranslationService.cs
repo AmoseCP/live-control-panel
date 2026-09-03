@@ -471,6 +471,16 @@ public sealed class TranslationService : ITranslationService, IAsyncDisposable
                 "No Gemini API key is configured, so nothing can be translated. Ask the administrator to " +
                 "enter one on the settings page.");
 
+        // Not left to the system default on purpose. An unset capture device would send whatever
+        // microphone Windows currently prefers to the model — a webcam, a headset, the wrong input
+        // on the mixer — and the panel would report a perfectly healthy translator the whole time.
+        // Silence is diagnosable; confidently translating the wrong room is not.
+        if (string.IsNullOrWhiteSpace(settings.CaptureDeviceId))
+            return new Msg(
+                "还没有选翻译要采集的声音设备（应选调音台那个录音设备）。请在设置页选择。",
+                "No recording device is selected for the translator to listen to (it should be the mixer). " +
+                "Choose one on the settings page.");
+
         if (string.IsNullOrWhiteSpace(settings.PlaybackDeviceId))
             return new Msg(
                 "还没有选翻译语音的播放设备（应选虚拟声卡 CABLE Input）。请在设置页选择。",

@@ -373,8 +373,16 @@ public sealed class Preflight
     /// </summary>
     private Msg? DeviceProblem(TranslationSettings translation)
     {
-        if (!string.IsNullOrWhiteSpace(translation.CaptureDeviceId)
-            && !_audio.CaptureDevices().Any(d => d.Id == translation.CaptureDeviceId))
+        if (string.IsNullOrWhiteSpace(translation.CaptureDeviceId))
+        {
+            return new Msg(
+                "还没有选翻译要采集的声音设备。请在设置页选调音台那个录音设备 —— " +
+                "不选的话面板不会去猜，翻译不会启动。",
+                "No recording device is selected for the translator. Choose the mixer's recording device on " +
+                "the settings page — the panel will not guess, so translation will not start.");
+        }
+
+        if (!_audio.CaptureDevices().Any(d => d.Id == translation.CaptureDeviceId))
         {
             return new Msg(
                 "找不到设置里选的翻译采集设备（应该是调音台那个录音设备）。" +

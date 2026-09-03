@@ -377,6 +377,17 @@ public static class Endpoints
                     if (string.IsNullOrWhiteSpace(translation.TargetLanguage))
                         translation.TargetLanguage = "en";
 
+                    // Same protection, for the same reason: the device pickers fill in
+                    // asynchronously, and a save that raced them replaced a chosen device with a
+                    // blank. A blank capture device is the dangerous one — it falls through to the
+                    // system default recording device, so the translator would carry on translating
+                    // whatever microphone Windows happened to prefer.
+                    if (string.IsNullOrWhiteSpace(translation.CaptureDeviceId))
+                        translation.CaptureDeviceId = current.Translation.CaptureDeviceId;
+
+                    if (string.IsNullOrWhiteSpace(translation.PlaybackDeviceId))
+                        translation.PlaybackDeviceId = current.Translation.PlaybackDeviceId;
+
                     current.Translation = translation;
                 }
                 if (body.YouTube is { } yt)

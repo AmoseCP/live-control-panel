@@ -209,6 +209,26 @@
     return element;
   }
 
+  /*
+   * A device selection, but only when the picker can actually represent one.
+   *
+   * The lists fill in asynchronously and are left empty when the request fails. Reading an
+   * unpopulated <select> yields '', and the server replaces the whole translation section — so an
+   * administrator who changed anything at all within that window silently lost the configured
+   * devices. That is worse here than it looks: an empty captureDeviceId falls through to the
+   * *system default recording device*, so the translator would go on happily translating a webcam
+   * microphone while the panel showed everything as fine.
+   *
+   * An empty picker means "I do not know", not "the administrator chose nothing".
+   */
+  function pickedDevice(id, storedKey) {
+    var stored = (settings.translation || {})[storedKey] || '';
+    var picker = document.getElementById(id);
+
+    if (!picker || picker.options.length === 0) return stored;
+    return picker.value;
+  }
+
   L.on('btn-save', function () {
     saveSettings().then(function (result) {
       report(result);
@@ -263,8 +283,8 @@
         titleSuffix: value('tr-suffix'),
         // Created through its own endpoint; the server keeps the stored one when this is blank.
         streamId: (settings.translation && settings.translation.streamId) || '',
-        captureDeviceId: value('tr-capture'),
-        playbackDeviceId: value('tr-playback'),
+        captureDeviceId: pickedDevice('tr-capture', 'captureDeviceId'),
+        playbackDeviceId: pickedDevice('tr-playback', 'playbackDeviceId'),
         obsInputName: value('tr-obs-input'),
         obsAudioTrack: intOr(value('tr-track'), 2)
       }

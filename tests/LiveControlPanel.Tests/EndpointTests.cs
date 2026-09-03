@@ -663,6 +663,46 @@ public sealed class EndpointTests : IAsyncLifetime
         return await _client.SendAsync(request);
     }
 
+    // ---------------------------------------------------------------- AI translation
+
+    /// <summary>
+    /// A blank device id never overwrites a configured one.
+    ///
+    /// The pickers fill in asynchronously, and a save that raced them replaced a chosen device with
+    /// a blank. That was worse than it looks for the capture device: an empty one used to fall
+    /// through to the system default recording device, so the translator would go on translating
+    /// whatever microphone Windows preferred while the panel showed everything as fine.
+    /// </summary>
+    [Fact]
+    public async Task A_partial_save_cannot_blank_the_translation_devices()
+    {
+        _fixtures.EnableTranslation();
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/settings?k={_code}")
+        {
+            Content = JsonContent.Create(new
+            {
+                translation = new
+                {
+                    enabled = true,
+                    apiKey = "test-key",
+                    captureDeviceId = "",
+                    playbackDeviceId = "",
+                    targetLanguage = "en",
+                },
+            }),
+        };
+        request.Headers.Add(AccessGate.PinHeader, _pin);
+
+        Assert.Equal(HttpStatusCode.OK, (await _client.SendAsync(request)).StatusCode);
+
+        var translation = _fixtures.Config.Settings.Translation;
+        Assert.Equal("mixer-1", translation.CaptureDeviceId);
+        Assert.Equal("cable-1", translation.PlaybackDeviceId);
+        // The stream key was already protected this way; the devices now match it.
+        Assert.Equal("stream-2", translation.StreamId);
+    }
+
     // ---------------------------------------------------------------- oauth
 
     [Fact]
