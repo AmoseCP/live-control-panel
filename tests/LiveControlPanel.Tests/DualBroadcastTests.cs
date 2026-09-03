@@ -401,8 +401,16 @@ public sealed class DualBroadcastTests
         Assert.Equal(BroadcastStatus.Complete, after.Translated!.Status);
     }
 
+    /// <summary>
+    /// The translator is deliberately left running when OBS will not stop.
+    ///
+    /// This pinned the opposite until a review caught it. Stopping the translator first meant that
+    /// when obs-websocket dropped mid-service, the panel returned "stop it directly in OBS" while
+    /// OBS carried on pushing both RTMP targets — and the translated one now streamed pure silence
+    /// for as long as the operator took to walk over. Nothing restarted it, either.
+    /// </summary>
     [Fact]
-    public async Task The_translator_is_stopped_even_when_OBS_refuses_to_stop()
+    public async Task The_translator_keeps_running_when_OBS_refuses_to_stop()
     {
         using var host = new TestHost();
         host.EnableTranslation();
@@ -414,7 +422,86 @@ public sealed class DualBroadcastTests
         var outcome = await host.Orchestrator.StopAsync();
 
         Assert.False(outcome.Ok);
+        Assert.Equal(0, host.Translation.StopCalls);
+        Assert.True(host.Translation.IsRunning);
+    }
+
+    /// <summary>And on the normal path it is stopped, just after OBS rather than before it.</summary>
+    [Fact]
+    public async Task The_translator_is_stopped_once_OBS_has_actually_stopped()
+    {
+        using var host = new TestHost();
+        host.EnableTranslation();
+        host.SetToday();
+
+        await host.Orchestrator.StartTodayAsync();
+        var outcome = await host.Orchestrator.StopAsync();
+
+        Assert.True(outcome.Ok);
+        Assert.Equal(1, host.Obs.StopStreamCalls);
         Assert.Equal(1, host.Translation.StopCalls);
+    }
+
+    // ---------------------------------------------------------------- reconnecting the translator
+
+    /// <summary>
+    /// The button used to answer "translation reconnected" and then be undone by the background
+    /// reconciler on its next pass — in the one state it is shown for. An explanation the operator
+    /// can act on is worth more than a retry that cannot work.
+    /// </summary>
+    [Fact]
+    public async Task Reconnecting_is_refused_when_YouTube_has_already_ended_the_translated_broadcast()
+    {
+        using var host = new TestHost();
+        host.EnableTranslation();
+        host.SetToday();
+        await host.Orchestrator.StartTodayAsync();
+
+        host.State.Mutate(s => s.Translated!.Status = BroadcastStatus.Complete);
+        host.Translation.StartedLanguages.Clear();
+
+        var outcome = await host.Orchestrator.RestartTranslationAsync();
+
+        Assert.False(outcome.Ok);
+        Assert.Empty(host.Translation.StartedLanguages);
+        Assert.Contains("多路推流", outcome.Message.Zh);
+        Assert.Contains("multi-RTMP", outcome.Message.En);
+    }
+
+    [Fact]
+    public async Task Reconnecting_is_refused_when_no_translated_broadcast_was_ever_created()
+    {
+        using var host = new TestHost();
+        host.EnableTranslation();
+        host.SetToday();
+
+        host.YouTube.CreateFailure = request =>
+            request.Title == TranslatedTitle ? new InvalidOperationException("boom") : null;
+        await host.Orchestrator.StartTodayAsync();
+
+        Assert.Null(host.State.Snapshot().Translated);
+        host.Translation.StartedLanguages.Clear();
+
+        var outcome = await host.Orchestrator.RestartTranslationAsync();
+
+        Assert.False(outcome.Ok);
+        Assert.Empty(host.Translation.StartedLanguages);
+        Assert.Contains("原声", outcome.Message.Zh);
+    }
+
+    [Fact]
+    public async Task Reconnecting_works_while_the_translated_broadcast_is_still_live()
+    {
+        using var host = new TestHost();
+        host.EnableTranslation();
+        host.SetToday();
+        await host.Orchestrator.StartTodayAsync();
+        host.Translation.StartedLanguages.Clear();
+
+        var outcome = await host.Orchestrator.RestartTranslationAsync();
+
+        Assert.True(outcome.Ok, outcome.Message.En);
+        Assert.Equal(new[] { "en" }, host.Translation.StartedLanguages);
     }
 
     [Fact]

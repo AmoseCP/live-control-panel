@@ -135,6 +135,87 @@ public sealed class TranslationHealthTests
     }
 
     /// <summary>
+    /// A settings-page smoke test owns the translator and deliberately runs with no translated
+    /// broadcast — the very condition the reconciler treats as orphaned. It used to stop the test
+    /// within five seconds, and the test then reported "cannot reach Gemini" on a healthy setup.
+    /// </summary>
+    [Fact]
+    public async Task A_smoke_test_in_flight_is_not_reconciled_away()
+    {
+        using var host = new TestHost();
+        await host.Translation.StartAsync("en");
+        host.Translation.IsTesting = true;
+
+        await Service(host).ReconcileTranslatorAsync();
+
+        Assert.Equal(0, host.Translation.StopCalls);
+        Assert.True(host.Translation.IsRunning);
+    }
+
+    /// <summary>The real service reports it, and the reconciler leaves the test alone end to end.</summary>
+    [Fact]
+    public async Task The_real_service_reports_a_test_in_flight()
+    {
+        using var host = new TestHost();
+        host.EnableTranslation();
+
+        var sessions = new FakeGeminiSessionFactory();
+        var service = new TranslationService(
+            host.Config, host.State, host.Audio, sessions, NullLogger<TranslationService>.Instance);
+
+        Assert.False(service.IsTesting);
+
+        var test = service.TestAsync(TimeSpan.FromMilliseconds(600));
+
+        // Observed while it runs, which is when the reconciler would otherwise fire.
+        var seenTesting = false;
+        for (var i = 0; i < 40 && !test.IsCompleted; i++)
+        {
+            seenTesting |= service.IsTesting;
+            await Task.Delay(20);
+        }
+
+        await test;
+
+        Assert.True(seenTesting);
+        Assert.False(service.IsTesting);
+    }
+
+    /// <summary>
+    /// The smoke test judges the microphone over the whole window. It used to read the peak of the
+    /// most recent frame — about ten milliseconds — after breaking out the moment the translated
+    /// reply arrived, by which time the speaker has usually stopped. A working mixer was reported
+    /// silent.
+    /// </summary>
+    [Fact]
+    public async Task The_smoke_test_remembers_that_it_heard_something()
+    {
+        using var host = new TestHost();
+        host.EnableTranslation();
+
+        var sessions = new FakeGeminiSessionFactory();
+        var service = new TranslationService(
+            host.Config, host.State, host.Audio, sessions, NullLogger<TranslationService>.Instance);
+
+        var test = service.TestAsync(TimeSpan.FromSeconds(5));
+
+        for (var i = 0; i < 100 && sessions.Sessions.Count == 0; i++) await Task.Delay(20);
+
+        // Someone speaks…
+        host.Audio.LastCapture!.LastPeak = 0.4;
+        await Task.Delay(400);
+
+        // …then stops, and only afterwards does the translated reply arrive.
+        host.Audio.LastCapture.LastPeak = 0;
+        sessions.Sessions[0].Push(new GeminiMessage { Audio = new byte[] { 1, 2 }, OutputTranscript = "Hi" });
+
+        var report = await test;
+
+        Assert.True(report.HeardInput);
+        Assert.True(report.Ok, report.Message.En);
+    }
+
+    /// <summary>
     /// The scenario that made this necessary. The deployment guide's own fallback is to stop OBS
     /// directly and end the broadcast in YouTube Studio — which never reaches the panel's stop path.
     /// The day rollover then cleared the broadcast from state while the translator kept its Gemini

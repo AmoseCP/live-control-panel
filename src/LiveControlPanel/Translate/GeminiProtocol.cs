@@ -119,6 +119,23 @@ public static class GeminiProtocol
     /// </summary>
     public static GeminiMessage? Parse(string json)
     {
+        // Everything below runs inside one catch on purpose. Parsing is only half the risk: the
+        // accessors themselves throw when a node is not the shape they expect — GetValue<string>()
+        // on a number, an indexer on an array — and this socket stays open for a whole service. The
+        // promise in the summary above is "a single unusable frame must not end it", and a frame
+        // that is valid JSON of the wrong shape is exactly as unusable as one that is not JSON.
+        try
+        {
+            return ParseCore(json);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static GeminiMessage? ParseCore(string json)
+    {
         JsonNode? root;
         try { root = JsonNode.Parse(json); }
         catch (JsonException) { return null; }

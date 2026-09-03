@@ -193,6 +193,29 @@ public sealed class GeminiProtocolTests
         Assert.Equal("ok", message.OutputTranscript);
     }
 
+    /// <summary>
+    /// Valid JSON of the wrong shape is exactly as unusable as text that is not JSON, and this
+    /// socket stays open for a whole service. The accessors throw on a mistyped node — GetValue
+    /// &lt;string&gt;() on a number, an indexer on an array — and those used to escape Parse, surface
+    /// as "translation failed" and tear the session down.
+    /// </summary>
+    [Theory]
+    [InlineData("""{"error":"a bare string, not an object"}""")]
+    [InlineData("""{"error":{"message":12345}}""")]
+    [InlineData("""{"serverContent":{"outputTranscription":{"text":42}}}""")]
+    [InlineData("""{"serverContent":{"modelTurn":{"parts":"not an array"}}}""")]
+    [InlineData("""{"serverContent":{"modelTurn":{"parts":["not an object"]}}}""")]
+    [InlineData("""{"serverContent":{"modelTurn":{"parts":[{"inlineData":{"mimeType":7,"data":"AA=="}}]}}}""")]
+    [InlineData("""{"serverContent":[1,2,3]}""")]
+    [InlineData("""[1,2,3]""")]
+    [InlineData("""42""")]
+    public void A_frame_of_the_wrong_shape_is_survivable(string json)
+    {
+        var exception = Record.Exception(() => GeminiProtocol.Parse(json));
+
+        Assert.Null(exception);
+    }
+
     [Fact]
     public void The_endpoint_url_escapes_the_key()
     {

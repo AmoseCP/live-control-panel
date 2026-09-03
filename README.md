@@ -30,7 +30,7 @@
 
 ```bash
 # 需要 .NET 8 SDK
-dotnet test                                    # 411 个单元/接口测试
+dotnet test                                    # 428 个单元/接口测试
 dotnet run --project src/LiveControlPanel       # 默认 http://localhost:5088
 ```
 
@@ -402,7 +402,7 @@ sunday-service    [0]         10:30  → 1
 
 ## 测试
 
-411 个测试，全部不接触真实的 YouTube / OBS / Telegram / Gemini，也不碰声卡。
+428 个测试，全部不接触真实的 YouTube / OBS / Telegram / Gemini，也不碰声卡。
 
 ```bash
 dotnet test

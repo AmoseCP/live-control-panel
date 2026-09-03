@@ -591,11 +591,6 @@ public sealed class Orchestrator
         var broadcast = _state.Read(s => s.Broadcast);
         var translated = _state.Read(s => s.Translated);
 
-        // Before OBS, so the last thing written to the virtual cable is not a half sentence that
-        // outlives the stream it belonged to.
-        try { await _translation.StopAsync().ConfigureAwait(false); }
-        catch (Exception ex) { _log.LogWarning(ex, "Stopping the translator failed"); }
-
         try
         {
             if (_obs.Status.Streaming) await _obs.StopStreamAsync(ct).ConfigureAwait(false);
@@ -603,10 +598,19 @@ public sealed class Orchestrator
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Stopping the OBS stream failed");
+
+            // The translator is deliberately still running here. OBS is still pushing both RTMP
+            // targets, and the operator has just been sent to stop it by hand — however long that
+            // takes, the translated stream keeps its audio instead of going silent on the way out.
             return new StartOutcome(false, null, new Msg(
                 "无法让 OBS 停止推流。请直接在 OBS 里点「停止推流」，然后再回到本页结束直播。",
                 "OBS would not stop streaming. Stop it directly in OBS, then come back here to end the broadcast."));
         }
+
+        // After OBS, not before: the cable outliving the stream by a moment is harmless, whereas a
+        // translated stream that is still on air with no audio is not.
+        try { await _translation.StopAsync().ConfigureAwait(false); }
+        catch (Exception ex) { _log.LogWarning(ex, "Stopping the translator failed"); }
 
         if (broadcast?.Id is not null)
         {
@@ -762,6 +766,30 @@ public sealed class Orchestrator
 
         if (!plan.Active)
             return new StartOutcome(false, null, new Msg("本场没有开启翻译。", "Translation is not on for this service."));
+
+        // Refused rather than attempted when there is nothing for the translator to feed. Starting
+        // it here used to answer "translation reconnected" and then be stopped by the background
+        // reconciler on its next pass — a button that reported success and quietly undid itself, in
+        // the one state it is shown for. Saying what is actually wrong is worth more than a retry
+        // that cannot work: the translated audio has nowhere to go until the second RTMP target is
+        // pushing again, and that is fixed in OBS, not here.
+        var translated = _state.Read(s => s.Translated);
+
+        if (translated?.Id is null)
+            return new StartOutcome(false, null, new Msg(
+                "本场没有建出翻译直播（开播时那一步是警告状态），所以没有可以重连的目标。" +
+                "本场只能是原声；下一场开播前请让管理员检查设置页的翻译配置。",
+                "No translated broadcast was created for this service — that step warned during the start — " +
+                "so there is nothing to reconnect to. This service is original audio only; ask the " +
+                "administrator to check the translation settings before the next one."));
+
+        if (translated.Status == BroadcastStatus.Complete)
+            return new StartOutcome(false, null, new Msg(
+                "翻译那条直播已经被 YouTube 结束了，重连翻译不会让它回来 —— 译音没有地方可去。" +
+                "请在 OBS 的「多路推流」面板确认第二个目标还在推流；原声这条不受影响。",
+                "YouTube has already ended the translated broadcast, so reconnecting the translator cannot " +
+                "bring it back — the translated audio has nowhere to go. Check in the OBS multi-RTMP dock " +
+                "that the second target is still streaming. The primary broadcast is unaffected."));
 
         var problem = await _translation.StartAsync(plan.TargetLanguage, ct).ConfigureAwait(false);
         if (problem is not null) return new StartOutcome(false, null, problem);

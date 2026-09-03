@@ -274,6 +274,28 @@ public sealed class TranslationServiceTests : IAsyncLifetime
         Assert.True(await Eventually(() => _sessions.Sessions[^1].Sent.Count >= 1));
     }
 
+    /// <summary>
+    /// A clean close is not a goAway. Setup acknowledged, then hung up on the first audio chunk, is
+    /// what an exhausted quota or a retired preview model looks like — and treating that as "the
+    /// server retired the session, re-open at once" reconnected with zero delay for a whole service.
+    /// </summary>
+    [Fact]
+    public async Task A_clean_close_that_is_not_a_go_away_backs_off_instead_of_spinning()
+    {
+        await _service.StartAsync("en");
+
+        // Every session accepts setup and is then closed straight away.
+        for (var i = 0; i < 20 && _sessions.Sessions.Count <= 3; i++)
+        {
+            foreach (var session in _sessions.Sessions) session.Close();
+            await Task.Delay(50);
+        }
+
+        // With a one-second backoff a second's worth of closes cannot produce a runaway count.
+        Assert.True(_sessions.Sessions.Count <= 3,
+            $"opened {_sessions.Sessions.Count} sessions in about a second");
+    }
+
     [Fact]
     public async Task A_server_error_is_surfaced_to_the_operator()
     {

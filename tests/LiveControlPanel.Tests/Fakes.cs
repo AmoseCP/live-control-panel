@@ -431,6 +431,9 @@ public sealed class FakeTranslationService : ITranslationService
 
     public bool IsRunning { get; private set; }
 
+    /// <summary>Settable, so the reconciler's exemption for a smoke test can be exercised.</summary>
+    public bool IsTesting { get; set; }
+
     public Task<Core.Msg?> StartAsync(string targetLanguage, CancellationToken ct = default)
     {
         if (StartThrows is { } ex) throw ex;

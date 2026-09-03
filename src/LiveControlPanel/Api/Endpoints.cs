@@ -388,6 +388,16 @@ public static class Endpoints
                     if (string.IsNullOrWhiteSpace(translation.PlaybackDeviceId))
                         translation.PlaybackDeviceId = current.Translation.PlaybackDeviceId;
 
+                    // The whole section is replaced, so every field needs this or it is one partial
+                    // save away from being blanked. A blank ObsInputName is the quiet one: the
+                    // pre-flight reads it as "skip that check", so the OBS-source verification would
+                    // simply stop running with nothing visible changing anywhere.
+                    if (string.IsNullOrWhiteSpace(translation.ObsInputName))
+                        translation.ObsInputName = current.Translation.ObsInputName;
+
+                    if (string.IsNullOrWhiteSpace(translation.ApiKey))
+                        translation.ApiKey = current.Translation.ApiKey;
+
                     current.Translation = translation;
                 }
                 if (body.YouTube is { } yt)

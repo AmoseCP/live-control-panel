@@ -181,7 +181,13 @@
     if (dot) dot.className = 'dot ' + status.dot;
     L.text('translation-text', status.text);
 
-    L.show('btn-translation-restart', status.dot !== 'ok' && state.phase === 'Live');
+    // Only where reconnecting can actually achieve something. With no translated broadcast — never
+    // created, or already ended by YouTube — the translated audio has nowhere to go, and the fix is
+    // in OBS rather than here; the server refuses those cases with an explanation either way.
+    var reconnectable = !!translated && translated.status !== 'complete';
+
+    L.show('btn-translation-restart',
+      status.dot !== 'ok' && state.phase === 'Live' && reconnectable);
   }
 
   function translationStatus(tr, translated) {
@@ -357,8 +363,11 @@
 
       var mark = document.createElement('span');
       mark.className = 'mark';
+      // 'warn' has its own marker: it fell through to '·' here, which is what a step that has not
+      // started yet shows — so the one line the operator is meant to notice read as "still pending".
       mark.textContent = step.status === 'done' || step.status === 'skipped' ? '✓'
         : step.status === 'failed' ? '✕'
+        : step.status === 'warn' ? '!'
         : step.status === 'running' ? '…' : '·';
 
       var detail = pick(step.message);

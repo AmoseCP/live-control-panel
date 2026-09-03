@@ -27,6 +27,16 @@ public interface ITranslationService
 {
     bool IsRunning { get; }
 
+    /// <summary>
+    /// True while a settings-page smoke test owns the translator.
+    ///
+    /// The test deliberately runs with no translated broadcast in state, which is exactly what the
+    /// background reconciler treats as an orphaned translator — so without this it stopped the test
+    /// within five seconds and the test then reported "cannot reach Gemini" on a perfectly healthy
+    /// setup, sending an administrator off to fix configuration that was already correct.
+    /// </summary>
+    bool IsTesting { get; }
+
     /// <summary>Starts translating into <paramref name="targetLanguage"/>. Null means it came up.</summary>
     Task<Msg?> StartAsync(string targetLanguage, CancellationToken ct = default);
 
@@ -62,6 +72,16 @@ public sealed class TranslationService : ITranslationService, IAsyncDisposable
     /// </summary>
     private const int FrameQueueDepth = 50;
 
+    /// <summary>
+    /// How many back-to-back immediate reconnects are allowed before the backoff takes over.
+    ///
+    /// Only a goAway earns an immediate reconnect — the server retiring a session it intends us to
+    /// re-open. Any other clean close is indistinguishable from "accepted the setup, then hung up",
+    /// which is what an exhausted quota or a retired preview model looks like; reconnecting on that
+    /// with no delay hammered the API for the length of a whole service.
+    /// </summary>
+    private const int MaxImmediateReconnects = 3;
+
     private readonly ConfigStore _config;
     private readonly StateManager _state;
     private readonly IAudioEngine _audio;
@@ -80,6 +100,9 @@ public sealed class TranslationService : ITranslationService, IAsyncDisposable
     private TaskCompletionSource<Msg?>? _firstOutcome;
 
     private volatile bool _connected;
+
+    /// <summary>Set by the receive loop when the server asks us to retire this session.</summary>
+    private volatile bool _goAway;
     private Msg? _lastError;
     private DateTime? _lastAudioAt;
     private string? _lastTranscript;
@@ -101,6 +124,10 @@ public sealed class TranslationService : ITranslationService, IAsyncDisposable
     }
 
     public bool IsRunning => _run is { IsCancellationRequested: false };
+
+    private volatile bool _testing;
+
+    public bool IsTesting => _testing;
 
     // ---------------------------------------------------------------- start / stop
 
@@ -164,6 +191,11 @@ public sealed class TranslationService : ITranslationService, IAsyncDisposable
                 _lastError = message;
                 await StopCoreAsync().ConfigureAwait(false);
                 _log.LogWarning(ex, "Starting the translation audio devices failed");
+
+                // Published, like every other failure path here. Without it the card kept the
+                // previous run's green "translation is going into the second broadcast" — so a
+                // mixer switched off mid-service, then a tapped "reconnect", read as healthy.
+                Publish(running: false);
                 return message;
             }
 
@@ -259,11 +291,13 @@ public sealed class TranslationService : ITranslationService, IAsyncDisposable
     private async Task RunAsync(string apiKey, GeminiSessionOptions options, CancellationToken ct)
     {
         var backoff = TimeSpan.FromSeconds(1);
+        var immediateReconnects = 0;
 
         while (!ct.IsCancellationRequested)
         {
             IGeminiSession? session = null;
             var reconnectImmediately = false;
+            _goAway = false;
 
             try
             {
@@ -289,9 +323,11 @@ public sealed class TranslationService : ITranslationService, IAsyncDisposable
                 await Quiet(receive).ConfigureAwait(false);
                 await Quiet(send).ConfigureAwait(false);
 
-                // A clean end is the server retiring the session (goAway) — reconnect at once
-                // rather than leaving the second stream silent through a backoff.
-                reconnectImmediately = finished.IsCompletedSuccessfully;
+                // Only a goAway earns the immediate reconnect. A clean close on its own is what an
+                // exhausted quota looks like — setup acknowledged, then hung up on the first audio
+                // chunk — and treating that as "retired, re-open at once" produced a zero-delay
+                // reconnect loop that ran for the whole service.
+                reconnectImmediately = finished.IsCompletedSuccessfully && _goAway;
                 await finished.ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -327,13 +363,16 @@ public sealed class TranslationService : ITranslationService, IAsyncDisposable
             _connected = false;
             if (ct.IsCancellationRequested) break;
 
-            if (!reconnectImmediately)
-            {
-                try { await Task.Delay(backoff, ct).ConfigureAwait(false); }
-                catch (OperationCanceledException) { break; }
+            // Even a genuine goAway is capped: a server stuck in a retire-immediately loop must not
+            // become a hot loop here.
+            if (reconnectImmediately && ++immediateReconnects <= MaxImmediateReconnects) continue;
 
-                backoff = TimeSpan.FromTicks(Math.Min(backoff.Ticks * 2, MaxBackoff.Ticks));
-            }
+            immediateReconnects = 0;
+
+            try { await Task.Delay(backoff, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { break; }
+
+            backoff = TimeSpan.FromTicks(Math.Min(backoff.Ticks * 2, MaxBackoff.Ticks));
         }
 
         _connected = false;
@@ -380,6 +419,7 @@ public sealed class TranslationService : ITranslationService, IAsyncDisposable
         // connecting while this one still has audio queued, instead of after a silent drop.
         if (message.GoAway)
         {
+            _goAway = true;
             _log.LogInformation("Gemini asked to end the session; reconnecting");
             try { _session?.Cancel(); } catch (ObjectDisposedException) { /* already gone */ }
         }
@@ -416,18 +456,28 @@ public sealed class TranslationService : ITranslationService, IAsyncDisposable
                 false, false, false, null, null);
 
         var settings = _config.Settings.Translation;
+
+        _testing = true;
         var start = await StartAsync(settings.TargetLanguage, ct).ConfigureAwait(false);
 
         try
         {
+            // Sampled throughout rather than read once at the end. LastPeak is the peak of the most
+            // recent frame — about ten milliseconds — and the loop below exits the moment the
+            // translated reply arrives, by which time the speaker has usually stopped. Reading it
+            // there reported "the capture device is silent" on a working mixer.
+            var heardInput = false;
+
             var deadline = DateTime.UtcNow + duration;
             while (DateTime.UtcNow < deadline && !ct.IsCancellationRequested)
             {
+                heardInput |= (_capture?.LastPeak ?? 0) > 0.0005;
+
                 if (_lastAudioAt is not null && _lastTranscript is not null) break;
                 await Task.Delay(TimeSpan.FromMilliseconds(250), ct).ConfigureAwait(false);
             }
 
-            var heardInput = (_capture?.LastPeak ?? 0) > 0.0005;
+            heardInput |= (_capture?.LastPeak ?? 0) > 0.0005;
             var produced = _lastAudioAt is not null;
             var connected = _connected;
 
@@ -458,6 +508,7 @@ public sealed class TranslationService : ITranslationService, IAsyncDisposable
         finally
         {
             await StopAsync().ConfigureAwait(false);
+            _testing = false;
         }
     }
 

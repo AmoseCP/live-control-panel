@@ -308,6 +308,11 @@ public sealed class PanelBackgroundService : BackgroundService
     {
         if (!_translation.IsRunning) return;
 
+        // A settings-page smoke test owns the translator and deliberately runs with no translated
+        // broadcast — the very condition this method treats as orphaned. Reconciling it away made
+        // the one tool that verifies the whole chain report failure on a healthy setup.
+        if (_translation.IsTesting) return;
+
         var wanted = _state.Read(s => s.Translated?.Id is not null
                                       && s.Translated.Status != BroadcastStatus.Complete);
         if (wanted) return;
