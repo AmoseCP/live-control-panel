@@ -173,6 +173,7 @@ public sealed class FakeObsClient : IObsClient
     /// <summary>A source whose two samples are identical — a wedged card or a No Signal screen.</summary>
     public void WithFrozenSource(string name, bool active = true)
     {
+        if (!Inputs.Contains(name, StringComparer.OrdinalIgnoreCase)) Inputs.Add(name);
         SourceActive[name] = active;
         Frames[name] = new List<byte[]?> { new byte[] { 1, 2, 3, 4 } };
     }
@@ -180,6 +181,7 @@ public sealed class FakeObsClient : IObsClient
     /// <summary>A source whose samples differ — a live camera, whose sensor noise guarantees it.</summary>
     public void WithMovingSource(string name, bool active = true)
     {
+        if (!Inputs.Contains(name, StringComparer.OrdinalIgnoreCase)) Inputs.Add(name);
         SourceActive[name] = active;
         Frames[name] = new List<byte[]?> { new byte[] { 1, 2, 3, 4 }, new byte[] { 9, 8, 7, 6 } };
     }
@@ -187,6 +189,7 @@ public sealed class FakeObsClient : IObsClient
     /// <summary>A source OBS will not render — the check must treat this as "cannot tell".</summary>
     public void WithUnrenderableSource(string name, bool active = true)
     {
+        if (!Inputs.Contains(name, StringComparer.OrdinalIgnoreCase)) Inputs.Add(name);
         SourceActive[name] = active;
         Frames[name] = new List<byte[]?> { null };
     }
@@ -257,6 +260,12 @@ public sealed class FakeDeviceResetter : IDeviceResetter
 
     public Exception? DisableThrows { get; set; }
 
+    /// <summary>
+    /// Models the case that made the disable-failure path lie: the WMI method ran and switched the
+    /// device off, then answered a non-zero status, so the resetter threw anyway.
+    /// </summary>
+    public bool DisableStillTakesEffect { get; set; }
+
     /// <summary>Given the 1-based attempt number, the failure to raise from Enable.</summary>
     public Func<int, Exception?>? EnableFailure { get; set; }
 
@@ -268,9 +277,25 @@ public sealed class FakeDeviceResetter : IDeviceResetter
 
     public Task DisableAsync(string instanceId, CancellationToken ct = default)
     {
-        if (DisableThrows is { } ex) throw ex;
-        Disabled.Add(instanceId);
+        if (DisableThrows is { } ex)
+        {
+            if (DisableStillTakesEffect) MarkDisabled(instanceId);
+            throw ex;
+        }
+
+        MarkDisabled(instanceId);
         return Task.CompletedTask;
+    }
+
+    /// <summary>Windows reports a disabled device as present but not "OK".</summary>
+    private void MarkDisabled(string instanceId)
+    {
+        Disabled.Add(instanceId);
+
+        for (var i = 0; i < Devices.Count; i++)
+        {
+            if (Devices[i].InstanceId == instanceId) Devices[i] = Devices[i] with { Status = "Error" };
+        }
     }
 
     /// <summary>How many times Enable was called, successful or not.</summary>
@@ -282,6 +307,12 @@ public sealed class FakeDeviceResetter : IDeviceResetter
         if (EnableFailure?.Invoke(EnableAttempts) is { } ex) throw ex;
 
         Enabled.Add(instanceId);
+
+        for (var i = 0; i < Devices.Count; i++)
+        {
+            if (Devices[i].InstanceId == instanceId) Devices[i] = Devices[i] with { Status = "OK" };
+        }
+
         return Task.CompletedTask;
     }
 }

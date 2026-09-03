@@ -207,6 +207,85 @@ public sealed class FrozenVideoTests
         Assert.Null(item.Action);
     }
 
+    // ---------------------------------------------------------------- bad configuration
+
+    /// <summary>
+    /// The failure this check exists to catch, produced by a typo in the settings field: the name
+    /// was skipped, nothing looked frozen, and the video item went green while the congregation
+    /// would have been looking at a "No Signal" screen.
+    /// </summary>
+    [Fact]
+    public async Task A_watched_source_OBS_does_not_know_fails_the_check_instead_of_passing_it()
+    {
+        using var host = new TestHost();
+        WatchOnly(host, "主摄象机");            // 象 instead of 像
+        host.Obs.WithFrozenSource("主摄像机");  // the real one, spelled correctly
+
+        var item = Video(await host.Preflight.RunAsync());
+
+        Assert.False(item.Ok);
+        Assert.Contains("主摄象机", item.Message.Zh);
+        Assert.Contains("不存在", item.Message.Zh);
+        Assert.Contains("do not exist in OBS", item.Message.En);
+    }
+
+    /// <summary>A configuration error is not something "reset the capture card" can fix.</summary>
+    [Fact]
+    public async Task A_bad_name_offers_no_hardware_action()
+    {
+        using var host = new TestHost();
+        WatchOnly(host, "打错了");
+        host.EnableCaptureReset();
+
+        var item = Video(await host.Preflight.RunAsync());
+
+        Assert.False(item.Ok);
+        Assert.Null(item.Action);
+    }
+
+    [Fact]
+    public async Task Every_bad_name_is_listed_not_just_the_first()
+    {
+        using var host = new TestHost();
+        WatchOnly(host, "打错了", "也打错了");
+
+        var item = Video(await host.Preflight.RunAsync());
+
+        Assert.Contains("打错了", item.Message.Zh);
+        Assert.Contains("也打错了", item.Message.Zh);
+    }
+
+    /// <summary>
+    /// An empty input list means the request failed, not that OBS has no inputs. Calling every
+    /// watched name unknown on that basis would be a false alarm of exactly the kind this check
+    /// must not raise — so the name check stands down and the freeze comparison still runs.
+    /// </summary>
+    [Fact]
+    public async Task An_unavailable_input_list_does_not_condemn_every_name()
+    {
+        using var host = new TestHost();
+        WatchOnly(host, "主摄像机");
+        host.Obs.WithFrozenSource("主摄像机");
+        host.Obs.Inputs.Clear();
+
+        var item = Video(await host.Preflight.RunAsync());
+
+        // Still judged on the frames, and still reported as frozen rather than as a bad name.
+        Assert.False(item.Ok);
+        Assert.Contains("没有变化", item.Message.Zh);
+    }
+
+    [Fact]
+    public async Task A_failing_input_list_request_does_not_condemn_every_name()
+    {
+        using var host = new TestHost();
+        WatchOnly(host, "主摄像机");
+        host.Obs.WithMovingSource("主摄像机");
+        host.Obs.FailOnce[nameof(host.Obs.GetInputNamesAsync)] = new InvalidOperationException("no");
+
+        Assert.True(Video(await host.Preflight.RunAsync()).Ok);
+    }
+
     // ---------------------------------------------------------------- the guard
 
     [Theory]

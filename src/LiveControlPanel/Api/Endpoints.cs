@@ -344,6 +344,19 @@ public static class Endpoints
                     "The settings password must be four to six digits.")));
             }
 
+            // "Switched on with no device chosen" is not a state worth storing: the operator page
+            // would hide the button and the pre-flight would stop offering the fix, both silently.
+            // It is also what a save racing the device picker used to produce — refusing it here
+            // means a partial save can never quietly cost an administrator their configuration.
+            if (body.CaptureReset is { Enabled: true } capture
+                && string.IsNullOrWhiteSpace(capture.DeviceInstanceId))
+            {
+                return Results.BadRequest(new ApiResult(false, new Msg(
+                    "「采集卡恢复」开着，但没有选中要重置的设备。请等设备列表加载出来、选中采集卡，再保存。",
+                    "Capture-card recovery is switched on but no device is selected. Wait for the device " +
+                    "list to load, pick the capture card, then save.")));
+            }
+
             config.UpdateSettings(current =>
             {
                 // Port is deliberately not editable here: changing it would strand every iPad's

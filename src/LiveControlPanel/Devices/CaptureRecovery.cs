@@ -121,29 +121,14 @@ public sealed class CaptureRecovery
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Disabling {Name} failed", device.Name);
-            return Fail(
-                "无法关闭采集卡。面板需要以管理员身份运行才能做这件事 —— " +
-                "请让管理员按部署文档第 6.1 节用带 -RunLevel Highest 的脚本重建计划任务。" +
-                "眼下的替代办法：拔插采集卡的 USB 线，或重启电脑。",
-                "Could not switch the capture card off. The panel has to run elevated for this — ask the " +
-                "administrator to re-register the scheduled task with -RunLevel Highest as in section 6.1 " +
-                "of the deployment guide. For now: unplug and re-plug the card's USB cable, or reboot.");
+            return await DescribeFailedDisableAsync(device, ct).ConfigureAwait(false);
         }
 
         try { await Task.Delay(SettleDelay, ct).ConfigureAwait(false); }
         catch (OperationCanceledException) { /* still must re-enable below */ }
 
-        if (!await TryEnableAsync(device, ct).ConfigureAwait(false))
-        {
-            // The worst outcome this method has: the card is off and stayed off. Say exactly that,
-            // and say what to do about it, because it is not something to discover mid-service.
-            return Fail(
-                $"采集卡已关闭，但重新打开失败，现在它是禁用状态。请在「设备管理器」里找到" +
-                $"「{device.Name}」，右键 → 启用设备；若仍不行请重启电脑。",
-                $"The capture card was switched off but could not be switched back on, so it is currently " +
-                $"disabled. Open Device Manager, find \"{device.Name}\", right-click and choose Enable " +
-                "device; if that does not work, reboot the PC.");
-        }
+        // The worst outcome this method has: the card is off and stayed off.
+        if (!await TryEnableAsync(device, ct).ConfigureAwait(false)) return LeftDisabled(device);
 
         _state.Mutate(s => s.CaptureReset.LastResetAt = DateTime.Now);
         _state.RecordAction(new Msg("重置采集卡", "Reset the capture card"));
@@ -166,6 +151,64 @@ public sealed class CaptureRecovery
                 "The capture card was reset. Glance at the OBS preview; if the picture has not come back, " +
                 "click the eye icon next to that video source in OBS off and on again."));
     }
+
+    /// <summary>
+    /// A disable that threw did not necessarily fail to disable.
+    ///
+    /// <see cref="WmiDeviceResetter"/> raises its exception <b>after</b> the WMI method has run,
+    /// whenever that method answers a non-zero status — and some of those statuses mean the device
+    /// really was switched off. Reporting "could not switch the card off" there would tell the
+    /// operator the exact opposite of what happened, on the one failure that leaves the card dead.
+    ///
+    /// So the device's actual state picks the message, and if it looks off, it is put back first.
+    /// </summary>
+    private async Task<DeviceResetResult> DescribeFailedDisableAsync(
+        PnpDeviceInfo device, CancellationToken ct)
+    {
+        PnpDeviceInfo? current = null;
+        try
+        {
+            current = await _devices.FindAsync(device.InstanceId, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "Re-reading {Name} after a failed disable failed", device.Name);
+        }
+
+        // Present and healthy: the disable genuinely did not take, so the card is untouched and the
+        // usual cause is that the panel is not elevated.
+        if (current is { Healthy: true }) return CannotDisable();
+
+        // Anything else — disabled, errored, or gone from the list — means it may be switched off.
+        // Put it back before saying anything.
+        if (await TryEnableAsync(device, ct).ConfigureAwait(false))
+        {
+            return Fail(
+                "重置没有成功，但采集卡现在是开着的。请拔插采集卡的 USB 线，或重启电脑。" +
+                "若反复如此，请让管理员确认面板是以管理员身份运行的（部署文档 6.1 节的 -RunLevel Highest）。",
+                "The reset did not go through, but the capture card is switched on. Unplug and re-plug its " +
+                "USB cable, or reboot. If this keeps happening, ask the administrator to confirm the panel " +
+                "runs elevated (-RunLevel Highest, section 6.1 of the deployment guide).");
+        }
+
+        return LeftDisabled(device);
+    }
+
+    private static DeviceResetResult CannotDisable() => Fail(
+        "无法关闭采集卡。面板需要以管理员身份运行才能做这件事 —— " +
+        "请让管理员按部署文档第 6.1 节用带 -RunLevel Highest 的脚本重建计划任务。" +
+        "眼下的替代办法：拔插采集卡的 USB 线，或重启电脑。",
+        "Could not switch the capture card off. The panel has to run elevated for this — ask the " +
+        "administrator to re-register the scheduled task with -RunLevel Highest as in section 6.1 " +
+        "of the deployment guide. For now: unplug and re-plug the card's USB cable, or reboot.");
+
+    /// <summary>Said only when the device has actually been confirmed to still be off.</summary>
+    private static DeviceResetResult LeftDisabled(PnpDeviceInfo device) => Fail(
+        $"采集卡已关闭，但重新打开失败，现在它是禁用状态。请在「设备管理器」里找到" +
+        $"「{device.Name}」，右键 → 启用设备；若仍不行请重启电脑。",
+        $"The capture card was switched off but could not be switched back on, so it is currently " +
+        $"disabled. Open Device Manager, find \"{device.Name}\", right-click and choose Enable " +
+        "device; if that does not work, reboot the PC.");
 
     private async Task<bool> TryEnableAsync(PnpDeviceInfo device, CancellationToken ct)
     {

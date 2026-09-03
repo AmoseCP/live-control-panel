@@ -703,6 +703,59 @@ public sealed class EndpointTests : IAsyncLifetime
         Assert.Empty(_fixtures.Devices.Disabled);
     }
 
+    /// <summary>
+    /// "Switched on with no device chosen" is refused rather than stored.
+    ///
+    /// That state is what a save racing the asynchronous device picker used to produce: the section
+    /// is replaced wholesale, so an administrator who changed the Telegram token two seconds after
+    /// unlocking lost the configured capture card — the operator page's reset button vanished and
+    /// the pre-flight stopped offering the fix, with no message anywhere.
+    /// </summary>
+    [Fact]
+    public async Task Capture_reset_cannot_be_saved_switched_on_with_no_device()
+    {
+        _fixtures.EnableCaptureReset();
+        var configured = _fixtures.Config.Settings.CaptureReset.DeviceInstanceId;
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/settings?k={_code}")
+        {
+            Content = JsonContent.Create(new
+            {
+                captureReset = new { enabled = true, deviceInstanceId = "", deviceName = "", obsInputName = "" },
+            }),
+        };
+        request.Headers.Add(AccessGate.PinHeader, _pin);
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<ApiResult>();
+        Assert.Contains("采集卡恢复", body!.Message.Zh);
+
+        // And nothing was lost on the way to that answer.
+        Assert.Equal(configured, _fixtures.Config.Settings.CaptureReset.DeviceInstanceId);
+    }
+
+    /// <summary>Turning it off with no device is how it is legitimately cleared.</summary>
+    [Fact]
+    public async Task Capture_reset_can_be_switched_off()
+    {
+        _fixtures.EnableCaptureReset();
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/settings?k={_code}")
+        {
+            Content = JsonContent.Create(new
+            {
+                captureReset = new { enabled = false, deviceInstanceId = "", deviceName = "", obsInputName = "" },
+            }),
+        };
+        request.Headers.Add(AccessGate.PinHeader, _pin);
+
+        Assert.Equal(HttpStatusCode.OK, (await _client.SendAsync(request)).StatusCode);
+        Assert.False(_fixtures.Config.Settings.CaptureReset.Enabled);
+    }
+
     /// <summary>The device picker is behind the PIN: choosing the wrong device is the whole risk.</summary>
     [Fact]
     public async Task The_device_picker_needs_the_pin()

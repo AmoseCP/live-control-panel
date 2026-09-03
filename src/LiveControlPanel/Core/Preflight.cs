@@ -301,11 +301,26 @@ public sealed class Preflight
         // Everything above answers "is there a picture at all". This answers "is the picture
         // moving", which is the question the capture card's own "No Signal" placeholder defeats:
         // to OBS that placeholder is a perfectly good picture and the source reports as active.
-        if (await FindFrozenSourceAsync(watched, ct).ConfigureAwait(false) is { } frozen)
-            return FrozenVideo(frozen);
+        var scan = await ScanWatchedSourcesAsync(watched, ct).ConfigureAwait(false);
+
+        // A name OBS does not know is reported, not skipped. Silently skipping it turned a typo in
+        // the settings field into a green checklist — the one outcome this check exists to prevent.
+        if (scan.Unknown.Count > 0)
+            return Fail("video", (
+                $"设置里要检查画面是否静止的来源{string.Join("、", scan.Unknown.Select(u => $"「{u}」"))}" +
+                "在 OBS 里不存在，这一项没有真正检查。请让管理员在设置页核对名称。",
+                $"The source{(scan.Unknown.Count > 1 ? "s" : "")} configured for the frozen-picture check " +
+                $"({string.Join(", ", scan.Unknown.Select(u => $"\"{u}\""))}) " +
+                "do not exist in OBS, so that check did not actually run. Ask the administrator to check " +
+                "the names on the settings page."));
+
+        if (scan.Frozen is { } frozen) return FrozenVideo(frozen);
 
         return Ok("video", ("画面正常。", "Video is fine."));
     }
+
+    /// <summary>What the frozen-picture pass found: at most one frozen source, plus any bad names.</summary>
+    private sealed record WatchedScan(string? Frozen, List<string> Unknown);
 
     /// <summary>
     /// The first source whose picture has not changed at all, or null.
@@ -315,33 +330,62 @@ public sealed class Preflight
     /// camera, and a check that cries wolf is worse than no check — the operator learns to click
     /// past the whole checklist.
     /// </summary>
-    private async Task<string?> FindFrozenSourceAsync(IReadOnlyList<string> names, CancellationToken ct)
+    private async Task<WatchedScan> ScanWatchedSourcesAsync(IReadOnlyList<string> names, CancellationToken ct)
     {
-        if (names.Count == 0) return null;
+        var unknown = new List<string>();
+        if (names.Count == 0) return new WatchedScan(null, unknown);
+
+        // Existence is checked against OBS's own input list, the way the audio check does it.
+        // IsSourceActiveAsync cannot answer this on its own: it returns null both for "OBS has
+        // never heard of this" and for "the request failed", and those need opposite treatment.
+        IReadOnlyList<string> inputs;
+        try
+        {
+            inputs = await _obs.GetInputNamesAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "Listing OBS inputs for the frozen-picture check failed");
+            inputs = Array.Empty<string>();
+        }
+
+        // An empty list means the request failed, not that OBS has no inputs. Calling every watched
+        // name unknown on that basis would be a false alarm of exactly the kind this check must not
+        // raise, so name-checking is skipped and only the freeze comparison runs.
+        var canCheckNames = inputs.Count > 0;
 
         var first = new List<(string Name, byte[] Frame)>();
 
         foreach (var name in names)
         {
+            if (canCheckNames
+                && !inputs.Any(i => string.Equals(i, name, StringComparison.OrdinalIgnoreCase)))
+            {
+                unknown.Add(name);
+                continue;
+            }
+
             if (await _obs.IsSourceActiveAsync(name, ct).ConfigureAwait(false) is not true) continue;
 
             var frame = await SampleAsync(name, ct).ConfigureAwait(false);
             if (frame is not null) first.Add((name, frame));
         }
 
+        if (unknown.Count > 0) return new WatchedScan(null, unknown);
+
         // Nothing to compare: OBS could not render any of them. "Cannot tell", not "no picture".
-        if (first.Count == 0) return null;
+        if (first.Count == 0) return new WatchedScan(null, unknown);
 
         try { await Task.Delay(FreezeSampleGap, ct).ConfigureAwait(false); }
-        catch (OperationCanceledException) { return null; }
+        catch (OperationCanceledException) { return new WatchedScan(null, unknown); }
 
         foreach (var (name, before) in first)
         {
             var after = await SampleAsync(name, ct).ConfigureAwait(false);
-            if (FrameFreeze.LooksFrozen(before, after)) return name;
+            if (FrameFreeze.LooksFrozen(before, after)) return new WatchedScan(name, unknown);
         }
 
-        return null;
+        return new WatchedScan(null, unknown);
     }
 
     /// <summary>

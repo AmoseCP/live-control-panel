@@ -202,6 +202,32 @@
 
   L.on('btn-list-devices', loadCaptureDevices);
 
+  /*
+   * The capture-reset section of the save body.
+   *
+   * The device picker fills in asynchronously — the WMI query behind it routinely takes one to
+   * three seconds — and it is left empty when that query fails. Reading an unpopulated <select>
+   * yields '', and because the server replaces the whole section, that silently erased the
+   * configured capture card whenever an administrator saved *anything* within those seconds. The
+   * reset button then disappeared from the operator page with no message anywhere, and nobody found
+   * out until 04:40, when it was needed.
+   *
+   * So a selection is only reported when the picker can actually represent one. An empty picker
+   * means "I do not know", not "the administrator chose nothing".
+   */
+  function captureResetBody() {
+    var stored = settings.captureReset || {};
+    var picker = document.getElementById('capture-device');
+    var populated = !!picker && picker.options.length > 0;
+
+    return {
+      enabled: !!(document.getElementById('capture-enabled') || {}).checked,
+      deviceInstanceId: populated ? picker.value : (stored.deviceInstanceId || ''),
+      deviceName: populated ? selectedDeviceName() : (stored.deviceName || ''),
+      obsInputName: value('capture-obs-input')
+    };
+  }
+
   /** The chosen device's display name, so the settings page can show what is configured. */
   function selectedDeviceName() {
     var element = document.getElementById('capture-device');
@@ -231,12 +257,7 @@
         videoSourceNames: splitList(value('obs-video')),
         frozenFrameSourceNames: splitList(value('obs-frozen'))
       },
-      captureReset: {
-        enabled: !!(document.getElementById('capture-enabled') || {}).checked,
-        deviceInstanceId: value('capture-device'),
-        deviceName: selectedDeviceName(),
-        obsInputName: value('capture-obs-input')
-      },
+      captureReset: captureResetBody(),
       slides: {
         enabled: !!(document.getElementById('slides-enabled') || {}).checked,
         windowClass: value('slides-class'),

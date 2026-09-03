@@ -194,6 +194,66 @@ public sealed class CaptureRecoveryTests
     }
 
     /// <summary>
+    /// A disable that threw did not necessarily fail to disable: the resetter raises its exception
+    /// after the WMI method has run, whenever that method answers a non-zero status. Reporting
+    /// "could not switch the card off" there told the operator the exact opposite of what happened.
+    /// </summary>
+    [Fact]
+    public async Task A_disable_that_threw_but_took_effect_is_put_back_and_reported_honestly()
+    {
+        using var host = new TestHost();
+        host.EnableCaptureReset();
+        host.Devices.DisableThrows = new DeviceResetFailedException("Disable returned status 6.");
+        host.Devices.DisableStillTakesEffect = true;
+
+        var result = await host.CaptureRecovery.ResetAsync();
+
+        Assert.False(result.Ok);
+
+        // Put back, rather than left off while being told the card was never touched.
+        Assert.Single(host.Devices.Enabled);
+        Assert.Contains("现在是开着的", result.Message.Zh);
+        Assert.Contains("switched on", result.Message.En);
+    }
+
+    /// <summary>
+    /// The other direction of the same mistake: when the device really is untouched, do not go
+    /// through the recovery path and do not imply it might be off.
+    /// </summary>
+    [Fact]
+    public async Task A_disable_that_never_took_effect_reports_elevation_and_touches_nothing()
+    {
+        using var host = new TestHost();
+        host.EnableCaptureReset();
+        host.Devices.DisableThrows = new DeviceResetFailedException("Disable needs an elevated process.");
+        host.Devices.DisableStillTakesEffect = false;
+
+        var result = await host.CaptureRecovery.ResetAsync();
+
+        Assert.False(result.Ok);
+        Assert.Equal(0, host.Devices.EnableAttempts);
+        Assert.Contains("RunLevel Highest", result.Message.Zh);
+    }
+
+    /// <summary>The worst case of all: the disable took effect, and it cannot be undone.</summary>
+    [Fact]
+    public async Task A_disable_that_took_effect_and_cannot_be_undone_is_reported_as_left_disabled()
+    {
+        using var host = new TestHost();
+        host.EnableCaptureReset();
+        host.Devices.DisableThrows = new DeviceResetFailedException("Disable returned status 6.");
+        host.Devices.DisableStillTakesEffect = true;
+        host.Devices.EnableFailure = _ => new DeviceResetFailedException("always fails");
+
+        var result = await host.CaptureRecovery.ResetAsync();
+
+        Assert.False(result.Ok);
+        Assert.Contains("设备管理器", result.Message.Zh);
+        Assert.Contains("AVerMedia HDMI Capture", result.Message.En);
+        Assert.Null(host.State.Snapshot().CaptureReset.LastResetAt);
+    }
+
+    /// <summary>
     /// A transient refusal must not leave the card switched off, so enable is retried rather than
     /// reported on the first failure.
     /// </summary>

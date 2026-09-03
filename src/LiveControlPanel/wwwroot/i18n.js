@@ -199,12 +199,14 @@
     'settings.obsFrozenHint': ['自检会给这些来源连拍两帧、间隔一秒多，两帧完全一样就报「画面没有变化」——' +
       '这能抓到采集卡的 <strong>No Signal</strong> 提示图，而 OBS 自己认为那是正常画面。' +
       '<strong>只填摄像机来源。</strong>放映用的桌面采集本来就可能长时间静止，填进来会误报，' +
-      '而误报会让人不再看自检。留空则完全不做这项检查。',
+      '而误报会让人不再看自检。名字填错时自检会直接报「在 OBS 里不存在」，不会假装检查通过。' +
+      '留空则完全不做这项检查。',
       'The checks take two frames of these sources about a second apart and report a frozen picture when ' +
       'they are identical. This is what catches the capture card\'s <strong>No Signal</strong> screen, ' +
       'which OBS itself considers a perfectly good picture. <strong>List the camera source only.</strong> ' +
       'A display capture showing a slide is legitimately still, and a false alarm is worse than no check — ' +
-      'it teaches the operator to ignore the checklist. Leave empty to skip this check entirely.'],
+      'it teaches the operator to ignore the checklist. A misspelled name is reported as "not present in ' +
+      'OBS" rather than quietly passing. Leave empty to skip this check entirely.'],
 
     'settings.captureHeading': ['采集卡恢复', 'Capture-card recovery'],
     'settings.captureHint': ['默认<strong>不开启</strong>。用于一个具体故障：采集卡卡住后画面没了，' +
