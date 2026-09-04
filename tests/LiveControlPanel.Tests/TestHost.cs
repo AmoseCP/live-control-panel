@@ -39,7 +39,7 @@ public sealed class TestHost : IDisposable
 
         Orchestrator = new Orchestrator(Config, State, YouTube, Obs, NullLogger<Orchestrator>.Instance);
         Notifications = new NotificationService(Config, State, Telegram);
-        Preflight = new Preflight(Config, Obs, YouTube, NullLogger<Preflight>.Instance);
+        Preflight = new Preflight(Config, Obs, YouTube, State, NullLogger<Preflight>.Instance);
     }
 
     public string Root { get; }

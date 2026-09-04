@@ -77,6 +77,8 @@ public sealed class StateManager
         s.Obs.DroppedFramesPercent = status.DroppedFramesPercent;
         s.Obs.KbitsPerSec = status.KbitsPerSec;
         s.Obs.Scenes = status.Scenes.ToList();
+        s.Obs.Reconnecting = status.Reconnecting;
+        s.Obs.Congestion = status.Congestion;
     });
 
     public void RefreshSlides()

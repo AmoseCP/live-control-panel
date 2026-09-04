@@ -72,6 +72,16 @@ public sealed class ObsState
     public double DroppedFramesPercent { get; set; }
     public long KbitsPerSec { get; set; }
     public List<string> Scenes { get; set; } = new();
+
+    /// <summary>
+    /// OBS has lost YouTube's ingest and is retrying. The stream timer keeps running and the bitrate
+    /// still reads healthy while this is true, so without surfacing it the panel shows a perfectly
+    /// normal live card during the one failure the operator most needs to know about.
+    /// </summary>
+    public bool Reconnecting { get; set; }
+
+    /// <summary>0..1, OBS's own measure of how hard it is finding it to push frames out.</summary>
+    public double Congestion { get; set; }
 }
 
 public sealed class SlidesState

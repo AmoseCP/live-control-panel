@@ -20,6 +20,19 @@
   var socket = null;
   var reconnectDelay = 1000;
   var reconnectTimer = null;
+  var lastMessageAt = 0;
+  var watchdogTimer = null;
+
+  /*
+   * The server pushes unconditionally every five seconds, so silence for four times that long means
+   * the socket is gone whatever readyState claims.
+   *
+   * visibilitychange alone was not enough. It covers an iPad that was locked and woken, but not one
+   * sitting awake on a stand while its access point fails over, and not a roam between APs — and in
+   * those cases readyState stays OPEN for minutes. The panel went on showing ● 直播中, the pre-drop
+   * bitrate and 0.0% dropped frames long after the stream had died, with no offline banner.
+   */
+  var SILENCE_LIMIT_MS = 20000;
 
   /* ---- websocket --------------------------------------------------------
    * FR 6.4: an iPad that has been asleep for ten minutes must recover on its own.
@@ -53,12 +66,15 @@
     ws.onopen = function () {
       if (socket !== ws) return;
       reconnectDelay = 1000;
+      lastMessageAt = Date.now();
       L.show('offline', false);
+      startWatchdog();
       refreshPreflight();
     };
 
     ws.onmessage = function (event) {
       if (socket !== ws) return;
+      lastMessageAt = Date.now();
       // Parse inside the guard, render outside it: a crash in render() is a bug to surface on
       // the next frame, not a "malformed frame" to swallow forever.
       var next = null;
@@ -75,6 +91,22 @@
       if (socket !== ws) return;
       L.show('offline', true);
     };
+  }
+
+  function startWatchdog() {
+    if (watchdogTimer !== null) return;
+
+    watchdogTimer = window.setInterval(function () {
+      if (lastMessageAt === 0) return;
+      if (Date.now() - lastMessageAt < SILENCE_LIMIT_MS) return;
+
+      // Say so first: the operator may be looking at this screen right now, and everything on it is
+      // stale. Then rebuild the socket rather than waiting for a close that is not coming.
+      L.show('offline', true);
+      lastMessageAt = Date.now();
+      reconnectDelay = 1000;
+      connect();
+    }, 5000);
   }
 
   function scheduleReconnect() {
@@ -223,6 +255,9 @@
   }
 
   function renderMetrics() {
+    // Shown above the metrics, because the metrics themselves look fine while this is true.
+    L.show('obs-reconnecting', !!state.obs.reconnecting && state.phase === 'Live');
+
     L.text('m-time-v', L.duration(state.obs.streamTimeSeconds));
     L.text('m-bitrate-v', state.obs.kbitsPerSec ? state.obs.kbitsPerSec + ' kb/s' : '—');
 
@@ -353,8 +388,28 @@
 
   var previewShownFor = null;
 
+  /*
+   * Slide numbers whose preview the presentation program could not render.
+   *
+   * Without this latch a 404 was retried on every state push — every five seconds, for the whole
+   * sermon. Each attempt runs a full COM attach walk to find the presentation, and then a second
+   * independent walk inside the export, so on the deployment the code itself expects (WPS with no
+   * Slide.Export) every connected iPad was driving COM calls into the live presentation program
+   * three times a minute, forever. The comment said "stay hidden"; nothing made it stay.
+   */
+  var previewUnavailable = {};
+
+  var lastSlideTotal = null;
+
   function renderSlides() {
     var slides = state.slides || {};
+
+    // A different deck is a different question. Total slides changing is the only signal the panel
+    // gets that the presentation was swapped, so the "cannot render" latch is cleared on it.
+    if (slides.total !== lastSlideTotal) {
+      lastSlideTotal = slides.total;
+      previewUnavailable = {};
+    }
     L.text('slide-pos', slides.current && slides.total
       ? t('slides.position', { current: slides.current, total: slides.total })
       : '');
@@ -385,6 +440,12 @@
       return;
     }
 
+    if (previewUnavailable[next]) {
+      previewShownFor = null;
+      L.show('slide-preview', false);
+      return;
+    }
+
     if (previewShownFor === next) {
       // Already showing the right slide; only the caption language may have changed.
       L.text('slide-preview-caption', t('slides.previewCaption', { n: next }));
@@ -403,7 +464,9 @@
       L.text('slide-preview-caption', t('slides.previewCaption', { n: next }));
     };
     image.onerror = function () {
-      // 404 = this presentation program cannot render a slide image. Stay hidden.
+      // 404 = this presentation program cannot render a slide image. Remembered, so it stays hidden
+      // instead of being asked again on the next push.
+      previewUnavailable[next] = true;
       previewShownFor = null;
       L.show('slide-preview', false);
     };

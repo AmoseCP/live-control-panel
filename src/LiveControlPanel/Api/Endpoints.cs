@@ -88,21 +88,40 @@ public static class Endpoints
 
     // ---------------------------------------------------------------- broadcast
 
+    /*
+     * A minimal-API CancellationToken parameter binds to HttpContext.RequestAborted, and these three
+     * endpoints must not be tied to it.
+     *
+     * Starting a broadcast legitimately takes twenty to ninety seconds — a thumbnail upload plus the
+     * sixty-second wait for YouTube to confirm it is receiving video. Everything routine an operator
+     * does in that window aborts the request: an iPad locking its screen, Wi-Fi roaming between
+     * access points, a pull-to-refresh, the OBS browser dock reloading. Passing the request token in
+     * meant the orchestration itself was cancelled server-side, mid-step.
+     *
+     * The worst case is a cancel inside CreateBroadcastAsync, which deliberately has no retry
+     * because insert is not idempotent: YouTube may have created the broadcast while local state
+     * stayed empty. The everyday case is worse for being confusing — a cancelled obs-websocket
+     * request surfaces as ObsUnavailableException, which the panel renders as "OBS is not
+     * connected", so a locked screen produced "open OBS" while OBS was open and streaming.
+     *
+     * These run to completion regardless of the client. The operator's page reconnects and picks the
+     * result up from pushed state; nothing about the broadcast depends on the HTTP response arriving.
+     */
     private static void MapBroadcast(WebApplication app)
     {
-        app.MapPost("/api/broadcast/start-today", async (Orchestrator orchestrator, CancellationToken ct) =>
+        app.MapPost("/api/broadcast/start-today", async (Orchestrator orchestrator) =>
         {
-            var outcome = await orchestrator.StartTodayAsync(ct: ct);
+            var outcome = await orchestrator.StartTodayAsync(ct: CancellationToken.None);
             return Outcome(outcome);
         });
 
         app.MapPost("/api/broadcast/retry/{step:int}",
-            async (int step, Orchestrator orchestrator, CancellationToken ct) =>
+            async (int step, Orchestrator orchestrator) =>
             {
                 if (step is < Orchestrator.StepCreate or > Orchestrator.StepAwaitLive)
                     return Results.BadRequest(new ApiResult(false, new Msg("无效的步骤编号。", "Invalid step number.")));
 
-                var outcome = await orchestrator.StartTodayAsync(step, ct);
+                var outcome = await orchestrator.StartTodayAsync(step, CancellationToken.None);
                 return Outcome(outcome);
             });
 
@@ -149,18 +168,19 @@ public static class Endpoints
         });
 
         // FR 4.3: the panel requires an explicit confirm flag; the UI puts a real dialog in front of it.
-        app.MapPost("/api/broadcast/stop", async (
-            ConfirmRequest body, Orchestrator orchestrator, CancellationToken ct) =>
+        app.MapPost("/api/broadcast/stop", async (ConfirmRequest body, Orchestrator orchestrator) =>
         {
             if (!body.Confirm)
                 return Results.BadRequest(new ApiResult(false, new Msg("需要确认后才能结束直播。", "The broadcast can only be ended after confirmation.")));
 
-            var outcome = await orchestrator.StopAsync(ct);
+            // Half-stopping is worse than either outcome: OBS stopped and YouTube still live, or the
+            // reverse. Once this is under way it finishes, whatever the client does.
+            var outcome = await orchestrator.StopAsync(CancellationToken.None);
             return Outcome(outcome);
         });
 
-        app.MapPost("/api/broadcast/end-previous", async (Orchestrator orchestrator, CancellationToken ct) =>
-            Outcome(await orchestrator.EndPreviousAsync(ct)));
+        app.MapPost("/api/broadcast/end-previous", async (Orchestrator orchestrator) =>
+            Outcome(await orchestrator.EndPreviousAsync(CancellationToken.None)));
 
         app.MapPost("/api/broadcast/start-another", (Orchestrator orchestrator) =>
             orchestrator.StartAnother()

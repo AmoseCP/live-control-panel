@@ -7,7 +7,17 @@ public sealed record ObsStatus(
     string? CurrentScene,
     double DroppedFramesPercent,
     long KbitsPerSec,
-    IReadOnlyList<string> Scenes);
+    IReadOnlyList<string> Scenes,
+    /// <summary>
+    /// OBS has lost the connection to YouTube's ingest and is trying to re-establish it.
+    ///
+    /// The single most broadcast-critical signal obs-websocket offers, and the panel was not reading
+    /// it. <c>outputActive</c> stays true throughout a reconnect, so the live card kept showing a
+    /// running stream timer and a healthy bitrate while nothing at all was reaching YouTube.
+    /// </summary>
+    bool Reconnecting = false,
+    /// <summary>0..1. OBS is struggling to push frames out — the early warning before a drop.</summary>
+    double Congestion = 0);
 
 /// <summary>
 /// Why the OBS connection is not up. "OBS is not connected" is not actionable on its own: the usual

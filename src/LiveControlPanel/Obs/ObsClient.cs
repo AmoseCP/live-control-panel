@@ -49,6 +49,20 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
     /// <summary>Logged once per distinct problem so a permanent misconfiguration is visible but not spammed.</summary>
     private ObsProblem _loggedProblem = ObsProblem.None;
 
+    /// <summary>Consecutive failed status polls. Reset by every successful refresh.</summary>
+    private int _pollFailures;
+
+    /// <summary>
+    /// How many polls in a row may fail before the panel stops claiming OBS is connected.
+    ///
+    /// Three, so a single slow request does not flap the indicator, but a wedged OBS is called out
+    /// within about six seconds. Without this the published status simply froze at the last good
+    /// sample: a half-open socket or an OBS stuck on a hung capture device left the panel reporting
+    /// "connected, streaming, N kb/s" indefinitely, and the pre-flight answering "OBS is connected",
+    /// while every request was timing out.
+    /// </summary>
+    private const int MaxPollFailures = 3;
+
     public ObsClient(ConfigStore config, ILogger<ObsClient> log)
     {
         _config = config;
@@ -167,6 +181,27 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
         {
             _sendGate.Release();
         }
+    }
+
+    /// <summary>
+    /// Stops claiming a healthy connection once the status polls have failed repeatedly, and drops
+    /// the socket so the connect loop rebuilds it. Publishing a stale "everything is fine" is worse
+    /// than saying nothing: it is the state in which nobody goes to look at OBS.
+    /// </summary>
+    private void NotePollFailure()
+    {
+        if (++_pollFailures < MaxPollFailures) return;
+
+        _log.LogWarning(
+            "OBS status has failed {Count} polls in a row; treating the connection as down", _pollFailures);
+
+        _pollFailures = 0;
+        _identified = false;
+        Diagnose(ObsProblem.Other);
+        Publish(new ObsStatus(false, false, 0, null, 0, 0, Array.Empty<string>()));
+
+        // Abort rather than close: the socket is not answering, so a polite handshake would hang.
+        try { _socket?.Abort(); } catch (Exception) { /* already gone */ }
     }
 
     // ---------------------------------------------------------------- connect / read loop
@@ -409,8 +444,16 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
             catch (OperationCanceledException) { return; }
 
             if (!_identified) continue;
-            try { await RefreshStatusAsync(ct).ConfigureAwait(false); }
-            catch (Exception ex) { _log.LogDebug(ex, "OBS status refresh failed"); }
+
+            try
+            {
+                await RefreshStatusAsync(ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _log.LogDebug(ex, "OBS status refresh failed");
+                NotePollFailure();
+            }
         }
     }
 
@@ -424,6 +467,8 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
         var totalFrames = stream?["outputTotalFrames"]?.GetValue<double>() ?? 0;
         var skippedFrames = stream?["outputSkippedFrames"]?.GetValue<double>() ?? 0;
         var bytes = (long)(stream?["outputBytes"]?.GetValue<double>() ?? 0);
+        var reconnecting = stream?["outputReconnecting"]?.GetValue<bool>() ?? false;
+        var congestion = stream?["outputCongestion"]?.GetValue<double>() ?? 0;
 
         var dropped = totalFrames > 0 ? Math.Round(skippedFrames / totalFrames * 100, 2) : 0;
 
@@ -452,7 +497,11 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
             CurrentScene: sceneList?["currentProgramSceneName"]?.GetValue<string>(),
             DroppedFramesPercent: dropped,
             KbitsPerSec: kbits,
-            Scenes: scenes));
+            Scenes: scenes,
+            Reconnecting: reconnecting,
+            Congestion: congestion));
+
+        _pollFailures = 0;
     }
 
     private void Publish(ObsStatus status)

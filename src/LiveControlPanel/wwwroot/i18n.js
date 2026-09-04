@@ -60,6 +60,10 @@
     'live.sentTelegram': ['已发送到 Telegram（{time}）', 'Sent to Telegram ({time})'],
     'live.retryTelegram': ['重试发送到 Telegram', 'Retry sending to Telegram'],
     'live.stop': ['结束直播', 'End the broadcast'],
+    'live.reconnecting': ['⚠ OBS 正在重连 YouTube —— 现在观众收不到画面。请检查网络；' +
+      '下面的时长和码率在这种时候仍会照常走，不代表还在正常直播。',
+      '⚠ OBS is reconnecting to YouTube — nothing is reaching viewers right now. Check the network; ' +
+      'the timer and bitrate below keep running regardless and do not mean the stream is healthy.'],
     'live.confirmStop': ['确定要结束这场直播吗？结束后无法继续。',
       'End this broadcast? It cannot be resumed.'],
     'live.confirmStopArm': ['再点一次，确认结束直播', 'Tap again to end the broadcast'],
@@ -311,6 +315,10 @@
 
     var button = document.getElementById('btn-lang');
     if (button) button.textContent = t('app.langButton');
+
+    // Rewriting labels here is what silently disarmed a two-step confirmation: the button kept its
+    // armed state while its text reverted, so the next tap fired the action with no warning shown.
+    if (global.LCP && typeof global.LCP.disarmAll === 'function') global.LCP.disarmAll();
 
     // Anything rendered from state rather than from the DOM has to be rebuilt too.
     if (typeof global.LCP_onLanguageChange === 'function') global.LCP_onLanguageChange();

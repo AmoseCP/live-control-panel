@@ -115,8 +115,11 @@ public sealed class FakeObsClient : IObsClient
     public double? AudioPeak { get; set; } = 0.4;
     public Dictionary<string, bool?> SourceActive { get; } = new();
 
+    /// <summary>OBS has lost YouTube's ingest and is retrying, while everything else still reads normal.</summary>
+    public bool Reconnecting { get; set; }
+
     public ObsStatus Status => new(Connected, Streaming, Streaming ? 120 : 0, CurrentScene, 0, Streaming ? 5000 : 0,
-        AvailableScenes);
+        AvailableScenes, Reconnecting);
 
     /// <summary>Lets a test choose which OBS misconfiguration the pre-flight should describe.</summary>
     public ObsProblem ProblemToReport { get; set; } = ObsProblem.NotListening;

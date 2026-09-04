@@ -38,9 +38,28 @@
     if (pin) headers['X-Settings-Pin'] = pin;
     if (body !== undefined) headers['Content-Type'] = 'application/json';
 
+    /*
+     * An explicit deadline, because the .catch() below only covers a connection that is refused.
+     * A stalled one — an iPad waking onto a half-dead Wi-Fi association — never settles at all, so
+     * neither handler runs: the start button, disabled by its own click handler and re-enabled only
+     * inside .then(), stayed greyed out with no toast and nothing on screen suggesting a reload.
+     *
+     * Generous, because starting a broadcast legitimately runs twenty to ninety seconds. Giving up
+     * here is safe now that the orchestration endpoints no longer run on the request token: the
+     * server finishes the sequence regardless, and the page picks the result up from pushed state.
+     */
+    var deadline = null;
+    var controller = null;
+
+    if (typeof AbortController === 'function') {
+      controller = new AbortController();
+      deadline = window.setTimeout(function () { controller.abort(); }, 120000);
+    }
+
     return fetch(path, {
       method: method,
       headers: headers,
+      signal: controller ? controller.signal : undefined,
       body: body === undefined ? undefined : JSON.stringify(body)
     }).then(function (response) {
       return response.text().then(function (text) {
@@ -53,6 +72,9 @@
       // importantly re-enabling the start button — inside .then(). An unhandled rejection at the
       // moment the panel restarts left the button disabled until someone thought to reload.
       return { status: 0, ok: false, data: null };
+    }).then(function (result) {
+      if (deadline !== null) window.clearTimeout(deadline);
+      return result;
     });
   }
 
@@ -140,24 +162,38 @@
    * confirm() returns false silently and the button would be dead with no feedback.
    * armedLabel is a function so the label follows a runtime language switch.
    */
+  /*
+   * Two-step arm for an irreversible action.
+   *
+   * The disarm-on-language-switch is not incidental. #btn-stop carries data-i18n, so i18n.apply()
+   * rewrites its label out from under this closure — and the language button sits at the top of the
+   * same screen. Arm "end the broadcast", tap the language button inside the five-second window, and
+   * the label reverted to its un-armed text while `armed` stayed true: the next tap ended a live
+   * broadcast with no confirmation ever shown. Disarming there also avoids restoring a label
+   * captured in the previous language.
+   */
+  var armed = [];
+
   function armConfirm(id, armedLabel, action) {
     var button = document.getElementById(id);
     if (!button) return;
 
-    var armed = false;
+    var isArmed = false;
     var timer = null;
     var original = null;
 
     function disarm() {
-      armed = false;
+      isArmed = false;
       if (timer) { window.clearTimeout(timer); timer = null; }
       if (original !== null) { button.textContent = original; original = null; }
       button.classList.remove('armed');
     }
 
+    armed.push(disarm);
+
     button.addEventListener('click', function () {
-      if (!armed) {
-        armed = true;
+      if (!isArmed) {
+        isArmed = true;
         original = button.textContent;
         button.textContent = armedLabel();
         button.classList.add('armed');
@@ -167,6 +203,11 @@
       disarm();
       action();
     });
+  }
+
+  /** Called by i18n.apply(), which is what rewrites the labels these buttons are holding. */
+  function disarmAll() {
+    for (var i = 0; i < armed.length; i++) armed[i]();
   }
 
   function show(id, visible) {
@@ -203,6 +244,7 @@
     copyText: copyText,
     on: on,
     armConfirm: armConfirm,
+    disarmAll: disarmAll,
     show: show,
     text: text,
     clockTime: clockTime,

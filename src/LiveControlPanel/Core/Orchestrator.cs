@@ -84,7 +84,14 @@ public sealed class Orchestrator
             _state.Mutate(s =>
             {
                 s.Starting = true;
-                s.Steps = StepNames.Select(n => new StepState { Step = n.Step, Name = n.Name }).ToList();
+
+                // Only rebuilt for a run from the beginning. A retry resumes at fromStep and never
+                // executes the steps before it, so resetting them left them "pending" for good —
+                // and the progress card stays on screen for the whole Live phase, so a successful
+                // recovery left the operator watching four grey dots for the rest of the service,
+                // on precisely the path where they most need to believe what the panel says.
+                if (fromStep <= StepCreate || s.Steps.Count == 0)
+                    s.Steps = StepNames.Select(n => new StepState { Step = n.Step, Name = n.Name }).ToList();
             });
 
             try
@@ -161,11 +168,18 @@ public sealed class Orchestrator
                 .FirstOrDefault(b => b.Title == today.Title);
             if (leftover is not null)
             {
+                // The adopted broadcast's real lifecycle, not a flat "created".
+                //
+                // Runtime state is memory-only by design, so a panel restart mid-service loses the
+                // broadcast; the phase then reads Ready, the operator taps start, and this adopts a
+                // broadcast that is already live. Recording it as "created" sent step 2 on to bind a
+                // live broadcast, which YouTube rejects — and every retry of that step failed the
+                // same way, with no path forward that did not end the service.
                 _state.Mutate(s => s.Broadcast = new BroadcastState
                 {
                     Id = leftover.Id,
                     WatchUrl = leftover.WatchUrl,
-                    Status = BroadcastStatus.Created,
+                    Status = AdoptedStatus(leftover.LifeCycleStatus),
                     Title = leftover.Title,
                     CreatedOn = _state.Clock(),
                 });
@@ -326,6 +340,22 @@ public sealed class Orchestrator
     {
         var broadcast = _state.Read(s => s.Broadcast);
 
+        // "Not streaming" and "cannot see OBS" are different answers, and only one of them means
+        // there is nothing to stop. ObsClient publishes Streaming = false whenever the websocket
+        // drops, so when the connection is down this test used to skip OBS entirely, transition the
+        // broadcast to complete, and report "the broadcast has ended" — while OBS carried on
+        // encoding and uploading to the ingest for the rest of the day.
+        if (!_obs.Status.Connected)
+        {
+            _log.LogWarning("Stop requested while OBS is not connected; not claiming the stream stopped");
+            return new StartOutcome(false, null, new Msg(
+                "面板连不上 OBS，没法确认推流已经停止。请直接在 OBS 里点「停止推流」，" +
+                "然后再回到本页结束直播 —— 在那之前这场还没有真正结束。",
+                "The panel cannot reach OBS, so it cannot confirm that streaming has stopped. Stop it " +
+                "directly in OBS, then come back here to end the broadcast — until then this service has " +
+                "not actually finished."));
+        }
+
         try
         {
             if (_obs.Status.Streaming) await _obs.StopStreamAsync(ct).ConfigureAwait(false);
@@ -437,6 +467,19 @@ public sealed class Orchestrator
     }
 
     // ---------------------------------------------------------------- helpers
+
+    /// <summary>
+    /// Maps YouTube's lifeCycleStatus onto the panel's own. Anything already on air adopts as Live
+    /// so bind, thumbnail and await-live all skip themselves; anything bound but not yet started
+    /// adopts as Bound so bind is not attempted twice.
+    /// </summary>
+    private static string AdoptedStatus(string? lifeCycleStatus) => lifeCycleStatus switch
+    {
+        "live" or "liveStarting" => BroadcastStatus.Live,
+        "testing" or "testStarting" => BroadcastStatus.Testing,
+        "ready" => BroadcastStatus.Bound,
+        _ => BroadcastStatus.Created,
+    };
 
     private BroadcastState RequireBroadcast() =>
         _state.Read(s => s.Broadcast) is { Id: not null } broadcast

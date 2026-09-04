@@ -23,13 +23,20 @@ public sealed class Preflight
     private readonly ConfigStore _config;
     private readonly IObsClient _obs;
     private readonly IYouTubeClient _youtube;
+    private readonly StateManager _state;
     private readonly ILogger<Preflight> _log;
 
-    public Preflight(ConfigStore config, IObsClient obs, IYouTubeClient youtube, ILogger<Preflight> log)
+    public Preflight(
+        ConfigStore config,
+        IObsClient obs,
+        IYouTubeClient youtube,
+        StateManager state,
+        ILogger<Preflight> log)
     {
         _config = config;
         _obs = obs;
         _youtube = youtube;
+        _state = state;
         _log = log;
     }
 
@@ -148,7 +155,19 @@ public sealed class Preflight
     {
         try
         {
-            var unfinished = await _youtube.ListUnfinishedBroadcastsAsync(ct).ConfigureAwait(false);
+            var all = await _youtube.ListUnfinishedBroadcastsAsync(ct).ConfigureAwait(false);
+
+            // This service's own broadcast is not a leftover. EndPreviousAsync already skips it, and
+            // the two disagreeing is what produced a warning the operator could not clear: a start
+            // that failed partway leaves a created-but-not-live broadcast, which keeps the phase on
+            // Ready and the checks on screen, so 自检 announced "an earlier broadcast is still
+            // running" about today's own — and the one-click fix it offered answered "there was
+            // nothing to end".
+            var current = _state.Read(s => s.Broadcast?.Id);
+            var unfinished = current is null
+                ? all
+                : all.Where(b => b.Id != current).ToList();
+
             if (unfinished.Count == 0)
                 return Ok("previousBroadcast", ("没有未结束的直播。", "No unfinished broadcasts."));
 

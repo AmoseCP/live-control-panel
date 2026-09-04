@@ -75,6 +75,12 @@
 <section id="phase-live" class="card hidden">
   <h2><span data-i18n="live.heading">正在直播</span><span class="onair" data-i18n="live.onair">● 直播中</span></h2>
   <p class="title-big" id="live-title">—</p>
+  <!--
+    OBS reconnecting to YouTube's ingest. Everything else on this card — the timer, the bitrate —
+    keeps reading normal throughout, so without saying it here the operator has no way to know the
+    congregation stopped receiving anything.
+  -->
+  <p id="obs-reconnecting" class="hidden" data-i18n="live.reconnecting"></p>
   <!-- Value and label are separate elements: writing the value via textContent on the tile
        itself would wipe the label span along with it. -->
   <div class="metrics" style="margin:10px 0 14px">
