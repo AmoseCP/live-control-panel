@@ -121,6 +121,12 @@ public sealed class StateManager
             _state.Today = null;
             _state.Steps = new List<StepState>();
             _state.Telegram = new TelegramState();
+
+            // Retired with the rest of yesterday's work. The note beside the button renders only
+            // HH:mm, so Wednesday's 04:41 reset read as "already tried this morning" to Thursday's
+            // operator — who then did not try it, which is precisely the opposite of what the field
+            // is for.
+            _state.CaptureReset.LastResetAt = null;
         }
         else if (_state.Today?.ScheduledStart is { } scheduled && scheduled.Date < now.Date
             && _state.Broadcast is null && _state.Today.Manual)

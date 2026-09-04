@@ -321,7 +321,51 @@ public sealed class CaptureRecoveryTests
         Assert.Single(host.Devices.Enabled);
     }
 
+    /// <summary>
+    /// A pre-cancelled request token — an iPad locking its screen the moment the tap lands — used to
+    /// make the gate throw, and that was the one exit from ResetAsync that produced no result at all,
+    /// escaping the endpoint instead of answering it.
+    /// </summary>
+    [Fact]
+    public async Task An_already_cancelled_request_still_gets_an_answer()
+    {
+        using var host = new TestHost();
+        host.EnableCaptureReset();
+
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+
+        var result = await host.CaptureRecovery.ResetAsync(cancelled.Token);
+
+        Assert.False(string.IsNullOrWhiteSpace(result.Message.Zh));
+        Assert.False(string.IsNullOrWhiteSpace(result.Message.En));
+    }
+
     // ---------------------------------------------------------------- state
+
+    /// <summary>
+    /// Retired with the rest of yesterday's work. The note beside the button renders HH:mm for
+    /// today, so a reset from a previous service read as "already tried this morning" — which is
+    /// exactly the reading that stops an operator trying it.
+    /// </summary>
+    [Fact]
+    public async Task The_last_reset_time_does_not_survive_into_the_next_day()
+    {
+        using var host = new TestHost();
+        host.EnableCaptureReset();
+        host.SetToday();
+
+        await host.Orchestrator.StartTodayAsync();
+        await host.CaptureRecovery.ResetAsync();
+        Assert.NotNull(host.State.Snapshot().CaptureReset.LastResetAt);
+
+        // Next day, with nothing on air, so the rollover retires yesterday's state.
+        host.Obs.Streaming = false;
+        host.State.Mutate(s => s.Broadcast!.Status = BroadcastStatus.Complete);
+        host.State.Clock = () => new DateTime(2026, 8, 6, 3, 0, 0);
+
+        Assert.Null(host.State.Snapshot().CaptureReset.LastResetAt);
+    }
 
     [Fact]
     public void The_button_is_hidden_until_a_device_is_actually_chosen()

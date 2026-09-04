@@ -265,14 +265,21 @@
           });
         }));
       } else if (item.action === 'reset-capture') {
-        body.appendChild(actionButton(t('preflight.resetCapture'), function (button) {
-          button.disabled = true;
-          L.api.post('/api/capture/reset').then(function (result) {
-            button.disabled = false;
-            report(result);
-            refreshPreflight();
-          });
-        }));
+        // Armed, like the one on the status card. This switches a piece of hardware off and on, and
+        // the checks card re-renders on every state push — a stray tap on a touch screen should not
+        // be enough. (end-previous next door is a single tap, but that one only ends a broadcast
+        // that is already finished as far as this service is concerned.)
+        body.appendChild(armedActionButton(
+          t('preflight.resetCapture'),
+          function () { return t('status.resetCaptureArm'); },
+          function (button) {
+            button.disabled = true;
+            L.api.post('/api/capture/reset').then(function (result) {
+              button.disabled = false;
+              report(result);
+              refreshPreflight();
+            });
+          }));
       } else if (item.action === 'reauthorize') {
         body.appendChild(actionButton(t('preflight.reauthorize'), function () {
           location.href = 'settings.html?k=' + encodeURIComponent(L.code);
@@ -283,6 +290,41 @@
       row.appendChild(body);
       host.appendChild(row);
     });
+  }
+
+  /*
+   * A two-step action button built fresh on every render.
+   *
+   * L.armConfirm binds to a fixed element id, which the checks card cannot offer — its rows are
+   * rebuilt from state each push. The behaviour is the same: first tap arms and relabels, a second
+   * within five seconds acts, and anything else disarms.
+   */
+  function armedActionButton(label, armedLabel, handler) {
+    var button = document.createElement('button');
+    var isArmed = false;
+    var timer = null;
+
+    function disarm() {
+      isArmed = false;
+      if (timer !== null) { window.clearTimeout(timer); timer = null; }
+      button.textContent = label;
+      button.classList.remove('armed');
+    }
+
+    button.textContent = label;
+    button.addEventListener('click', function () {
+      if (!isArmed) {
+        isArmed = true;
+        button.textContent = armedLabel();
+        button.classList.add('armed');
+        timer = window.setTimeout(disarm, 5000);
+        return;
+      }
+      disarm();
+      handler(button);
+    });
+
+    return button;
   }
 
   function actionButton(label, handler) {
@@ -457,8 +499,24 @@
     L.show('capture-reset-note', !!reset.enabled && !!reset.lastResetAt);
 
     if (reset.enabled && reset.lastResetAt) {
-      L.text('capture-reset-note', t('status.captureResetAt', { time: L.clockTime(reset.lastResetAt) }));
+      // The date too when it was not today. HH:mm alone let a reset from a previous service read as
+      // "someone already tried this morning" — the one reading that stops an operator trying.
+      L.text('capture-reset-note',
+        t('status.captureResetAt', { time: stampedTime(reset.lastResetAt) }));
     }
+  }
+
+  /** HH:mm for today, M/D HH:mm otherwise. Uses the server's clock, never the device's. */
+  function stampedTime(iso) {
+    var when = new Date(iso);
+    var server = new Date(state.serverTime);
+
+    if (isNaN(when.getTime())) return '';
+    if (!isNaN(server.getTime()) && when.toDateString() === server.toDateString()) {
+      return L.clockTime(iso);
+    }
+
+    return (when.getMonth() + 1) + '/' + when.getDate() + ' ' + L.clockTime(iso);
   }
 
   function renderTelegramButton() {

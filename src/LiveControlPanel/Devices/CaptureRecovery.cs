@@ -65,7 +65,11 @@ public sealed class CaptureRecovery
 
     public async Task<DeviceResetResult> ResetAsync(CancellationToken ct = default)
     {
-        if (!await _gate.WaitAsync(0, ct).ConfigureAwait(false))
+        // CancellationToken.None on the gate itself: a pre-cancelled request token — an iPad
+        // locking its screen the moment the tap lands — made WaitAsync throw, and that
+        // OperationCanceledException was the one exit from this method that produced no ApiResult,
+        // escaping the endpoint instead.
+        if (!await _gate.WaitAsync(0, CancellationToken.None).ConfigureAwait(false))
             return new DeviceResetResult(true, new Msg(
                 "正在重置采集卡，请稍候…", "Resetting the capture card, please wait…"));
 

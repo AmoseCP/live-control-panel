@@ -35,7 +35,11 @@ public sealed class WmiDeviceResetter : IDeviceResetter
                 using var searcher = new ManagementObjectSearcher(
                     "SELECT DeviceID, Name, PNPClass, Status FROM Win32_PnPEntity WHERE Present = TRUE");
 
-                foreach (var item in searcher.Get())
+                // The collection is disposable too. Leaving it to the finalizer holds a WMI
+                // enumerator and its COM objects on a process that runs for weeks.
+                using var results = searcher.Get();
+
+                foreach (var item in results)
                 {
                     using var device = (ManagementObject)item;
                     var info = Read(device);
@@ -107,14 +111,28 @@ public sealed class WmiDeviceResetter : IDeviceResetter
     {
         if (string.IsNullOrWhiteSpace(instanceId)) return null;
 
-        // Escaped twice over: the query is a string, and a device id is full of backslashes.
-        var escaped = instanceId.Replace("\\", "\\\\").Replace("'", "''");
+        // WQL escapes with a backslash, not by doubling the quote — doubling is the SQL convention,
+        // and using it here produced a malformed query that came back as "the configured device is
+        // not present on this PC". Device ids do not contain quotes in practice, but the comment
+        // claimed the escaping was right, which is the part worth fixing.
+        var escaped = instanceId.Replace("\\", "\\\\").Replace("'", "\\'");
 
         using var searcher = new ManagementObjectSearcher(
             $"SELECT DeviceID, Name, PNPClass, Status FROM Win32_PnPEntity WHERE DeviceID = '{escaped}'");
 
-        foreach (var item in searcher.Get()) return (ManagementObject)item;
-        return null;
+        // Enumerated to completion so the collection and every object in it are released. Returning
+        // from inside the loop abandoned the enumerator mid-iteration.
+        using var results = searcher.Get();
+
+        ManagementObject? found = null;
+        foreach (var item in results)
+        {
+            var device = (ManagementObject)item;
+            if (found is null) found = device;
+            else device.Dispose();
+        }
+
+        return found;
     }
 
     private static PnpDeviceInfo? Read(ManagementObject device)
