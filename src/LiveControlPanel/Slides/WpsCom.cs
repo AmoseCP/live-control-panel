@@ -221,10 +221,10 @@ internal static class WpsCom
         ComSession? session = null;
         try
         {
-            session = TryAttach();
+            session = TryAttach(out var attachErrors);
             if (session is null)
             {
-                var summary = AttachErrorSummary();
+                var summary = Summarize(attachErrors);
                 return new ComReport(null, false, null, null, false, new Msg(
                     "没有找到正在放映的演示程序。逐个尝试的结果：" + summary.Zh,
                     "No presenting program found. Results per ProgID: " + summary.En), CultureTag());
@@ -265,7 +265,6 @@ internal static class WpsCom
     /// Why attaching failed, per ProgID. Kept because a silent null here is undiagnosable: the COM
     /// layer has many independent ways to be unavailable and they need different fixes.
     /// </summary>
-    private static readonly List<Msg> LastAttachErrors = new();
 
     private static SlidePosition? ReadPosition(ComSession session)
     {
@@ -312,9 +311,21 @@ internal static class WpsCom
     /// Note this reaches the *running* instance through the ROT, which is per-session: a process in
     /// session 0 (a Windows service) cannot see an application on the interactive desktop.
     /// </summary>
-    private static ComSession? TryAttach()
+    private static ComSession? TryAttach() => TryAttach(out _);
+
+    /// <summary>
+    /// Attaches, and hands back the per-ProgID failures from <b>this</b> attempt.
+    ///
+    /// They used to be parked in a process-wide static that every call cleared on entry, while
+    /// Diagnose read them in a second step — with the five-second background poll calling TryAttach
+    /// in between. The one diagnostic whose entire purpose is naming which ProgID failed and why
+    /// could therefore print an empty list, or a double-length interleaved one, exactly when someone
+    /// was standing at the machine trying to find out.
+    /// </summary>
+    private static ComSession? TryAttach(out List<Msg> errors)
     {
-        lock (LastAttachErrors) LastAttachErrors.Clear();
+        errors = new List<Msg>();
+        var attemptErrors = errors;
 
         foreach (var progId in ProgIds)
         {
@@ -322,27 +333,27 @@ internal static class WpsCom
             try
             {
                 var hr = CLSIDFromProgID(progId, out var clsid);
-                if (hr != 0) { Note(progId, new Msg($"未注册 (CLSIDFromProgID 0x{hr:X8})", $"not registered (CLSIDFromProgID 0x{hr:X8})")); continue; }
+                if (hr != 0) { Note(attemptErrors, progId, new Msg($"未注册 (CLSIDFromProgID 0x{hr:X8})", $"not registered (CLSIDFromProgID 0x{hr:X8})")); continue; }
 
                 hr = GetActiveObject(ref clsid, IntPtr.Zero, out app);
-                if (hr != 0 || app is null) { Note(progId, new Msg($"未在运行 (GetActiveObject 0x{hr:X8})", $"not running (GetActiveObject 0x{hr:X8})")); continue; }
+                if (hr != 0 || app is null) { Note(attemptErrors, progId, new Msg($"未在运行 (GetActiveObject 0x{hr:X8})", $"not running (GetActiveObject 0x{hr:X8})")); continue; }
 
                 var windows = Get(app, "SlideShowWindows");
-                if (windows is null) { Note(progId, new Msg("读不到 SlideShowWindows", "cannot read SlideShowWindows")); continue; }
+                if (windows is null) { Note(attemptErrors, progId, new Msg("读不到 SlideShowWindows", "cannot read SlideShowWindows")); continue; }
 
                 var count = Convert.ToInt32(Get(windows, "Count") ?? 0);
-                if (count < 1) { Note(progId, new Msg("已连上，但当前没有在放映", "attached, but nothing is presenting")); continue; }
+                if (count < 1) { Note(attemptErrors, progId, new Msg("已连上，但当前没有在放映", "attached, but nothing is presenting")); continue; }
 
                 var window = Invoke(windows, "Item", 1);
-                if (window is null) { Note(progId, new Msg("读不到 SlideShowWindows.Item(1)", "cannot read SlideShowWindows.Item(1)")); continue; }
+                if (window is null) { Note(attemptErrors, progId, new Msg("读不到 SlideShowWindows.Item(1)", "cannot read SlideShowWindows.Item(1)")); continue; }
 
                 var view = Get(window, "View");
-                if (view is null) { Note(progId, new Msg("读不到 SlideShowWindow.View", "cannot read SlideShowWindow.View")); continue; }
+                if (view is null) { Note(attemptErrors, progId, new Msg("读不到 SlideShowWindow.View", "cannot read SlideShowWindow.View")); continue; }
 
                 // Presentation hangs off the *window*, not the view. Reading it from the view fails
                 // with DISP_E_UNKNOWNNAME on PowerPoint 16 — measured, whatever the docs imply.
                 var presentation = Get(window, "Presentation");
-                if (presentation is null) { Note(progId, new Msg("读不到 SlideShowWindow.Presentation", "cannot read SlideShowWindow.Presentation")); continue; }
+                if (presentation is null) { Note(attemptErrors, progId, new Msg("读不到 SlideShowWindow.Presentation", "cannot read SlideShowWindow.Presentation")); continue; }
 
                 var session = new ComSession(progId, app, window, view, presentation);
                 app = null;   // ownership moved to the session
@@ -350,7 +361,7 @@ internal static class WpsCom
             }
             catch (Exception ex)
             {
-                Note(progId, Msg.Same(ex.GetBaseException().Message));
+                Note(attemptErrors, progId, Msg.Same(ex.GetBaseException().Message));
             }
             finally
             {
@@ -368,21 +379,16 @@ internal static class WpsCom
         return $"{c.Name} (LCID {c.LCID}), invariant={System.Globalization.CultureInfo.InvariantCulture.Equals(c)}";
     }
 
-    private static void Note(string progId, Msg reason)
-    {
-        lock (LastAttachErrors)
-            LastAttachErrors.Add(new Msg($"{progId}: {reason.Zh}", $"{progId}: {reason.En}"));
-    }
+    private static void Note(List<Msg> errors, string progId, Msg reason) =>
+        errors.Add(new Msg($"{progId}: {reason.Zh}", $"{progId}: {reason.En}"));
 
-    private static Msg AttachErrorSummary()
+    private static Msg Summarize(List<Msg> errors)
     {
-        lock (LastAttachErrors)
-        {
-            if (LastAttachErrors.Count == 0) return Msg.Empty;
-            return new Msg(
-                string.Join("；", LastAttachErrors.Select(e => e.Zh)),
-                string.Join("; ", LastAttachErrors.Select(e => e.En)));
-        }
+        if (errors.Count == 0) return Msg.Empty;
+
+        return new Msg(
+            string.Join("；", errors.Select(e => e.Zh)),
+            string.Join("; ", errors.Select(e => e.En)));
     }
 
     private sealed class ComSession : IDisposable

@@ -81,12 +81,32 @@ public sealed class StateManager
         s.Obs.Congestion = status.Congestion;
     });
 
+    /// <summary>
+    /// How long the presentation program is given to answer before it is called unavailable.
+    ///
+    /// Every COM call into WPS/PowerPoint is an unbounded, blocking, cross-apartment call with no
+    /// message filter. If that program stops pumping — busy rendering a large slide, a modal save or
+    /// licence dialog, a wedged add-in — this used to block the background loop outright, which also
+    /// stopped the OBS status refresh and the authorization countdown, and left the operator with no
+    /// fix but restarting the panel mid-service.
+    ///
+    /// A bounded wait cannot un-block the COM call itself; that thread stays parked until the other
+    /// program recovers. What it does buy is that the panel keeps running and keeps saying something
+    /// true — "slides unavailable" — instead of freezing everything behind the one feature that is
+    /// explicitly optional.
+    /// </summary>
+    private static readonly TimeSpan SlideReadTimeout = TimeSpan.FromSeconds(3);
+
     public void RefreshSlides()
     {
         SlidesState slides;
         try
         {
-            slides = _slides.GetState();
+            var read = Task.Run(() => _slides.GetState());
+
+            slides = read.Wait(SlideReadTimeout) && read.IsCompletedSuccessfully
+                ? read.Result
+                : Unavailable(read);
         }
         catch (Exception ex)
         {
@@ -95,6 +115,25 @@ public sealed class StateManager
         }
 
         Mutate(s => s.Slides = slides);
+    }
+
+    private SlidesState Unavailable(Task<SlidesState> read)
+    {
+        if (!read.IsCompleted)
+        {
+            _log.LogWarning(
+                "The presentation program did not answer within {Timeout}; reporting slides unavailable",
+                SlideReadTimeout);
+        }
+        else
+        {
+            _log.LogDebug(read.Exception, "Reading slide state failed");
+        }
+
+        // Observed, so a faulted read does not surface later as an unobserved task exception.
+        _ = read.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);
+
+        return new SlidesState { Available = false, Enabled = _config.Settings.Slides.Enabled };
     }
 
     /// <summary>

@@ -180,7 +180,8 @@ public sealed class YouTubeClient : IYouTubeClient, IDisposable
                         item.Id,
                         item.Snippet?.Title ?? item.Id,
                         lifeCycle,
-                        IYouTubeClient.WatchUrl(item.Id)));
+                        IYouTubeClient.WatchUrl(item.Id),
+                        item.Snippet?.PublishedAtDateTimeOffset?.UtcDateTime));
                 }
 
                 pageToken = response.NextPageToken;

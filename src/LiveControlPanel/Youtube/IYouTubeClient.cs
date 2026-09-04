@@ -1,6 +1,17 @@
 namespace LiveControlPanel.Youtube;
 
-public sealed record BroadcastInfo(string Id, string Title, string LifeCycleStatus, string WatchUrl);
+public sealed record BroadcastInfo(
+    string Id,
+    string Title,
+    string LifeCycleStatus,
+    string WatchUrl,
+    /// <summary>
+    /// When YouTube says the broadcast was created, if it said. Used to keep leftover-adoption
+    /// inside today: titles carry the date only because the shipped title format happens to, and an
+    /// ad-hoc title would otherwise let the panel resume into a broadcast from a previous week.
+    /// Null means "unknown", which adopts as before rather than refusing.
+    /// </summary>
+    DateTime? CreatedAt = null);
 
 public sealed record StreamKeyInfo(string StreamId, string IngestionKey, string IngestionAddress);
 

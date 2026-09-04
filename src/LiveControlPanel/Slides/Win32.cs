@@ -21,6 +21,18 @@ internal static class Win32
 
     internal const ushort VK_LEFT = 0x25;
     internal const ushort VK_RIGHT = 0x27;
+    internal const ushort VK_UP = 0x26;
+    internal const ushort VK_DOWN = 0x28;
+    internal const ushort VK_PRIOR = 0x21;   // Page Up
+    internal const ushort VK_NEXT = 0x22;    // Page Down
+    internal const ushort VK_HOME = 0x24;
+    internal const ushort VK_END = 0x23;
+
+    /// <summary>Translate a virtual-key code to a scan code, for building a real lParam.</summary>
+    internal const uint MAPVK_VK_TO_VSC = 0;
+
+    [DllImport("user32.dll")]
+    internal static extern uint MapVirtualKey(uint code, uint mapType);
 
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 

@@ -69,7 +69,21 @@
       lastMessageAt = Date.now();
       L.show('offline', false);
       startWatchdog();
-      refreshPreflight();
+
+      /*
+       * State, not the checks.
+       *
+       * /api/preflight is not a read: it queries OBS and makes two YouTube API calls, then mutates
+       * and broadcasts to every client. Running it on every socket open meant every app-switch,
+       * Control Centre pull and notification on any connected iPad triggered a full check run —
+       * including mid-broadcast, when the checks card is hidden and the answer is discarded.
+       *
+       * The server pushes the current state within five seconds anyway; asking for it directly just
+       * removes the wait.
+       */
+      L.api.get('/api/state').then(function (result) {
+        if (result.data && result.data.phase) render(result.data);
+      });
     };
 
     ws.onmessage = function (event) {
@@ -123,15 +137,25 @@
   // for minutes while nothing arrives — the panel would sit frozen on pre-sleep state with no
   // offline banner. A fresh socket costs one round-trip; onopen repaints from live state.
   document.addEventListener('visibilitychange', function () {
-    if (!document.hidden) {
-      reconnectDelay = 1000;
-      connect();
+    if (document.hidden) return;
+
+    // Only when the socket has actually gone quiet. Reconnecting unconditionally dropped a healthy
+    // connection on every app-switch, and each rebuild used to drag a full check run behind it.
+    // The watchdog above covers the case this exists for — a socket iOS suspended without closing.
+    if (socket && socket.readyState === WebSocket.OPEN
+        && Date.now() - lastMessageAt < SILENCE_LIMIT_MS) {
+      return;
     }
+
+    reconnectDelay = 1000;
+    connect();
   });
 
   /* ---- render ------------------------------------------------------------ */
 
   function render(next) {
+    if (accessRefused) return;
+
     state = next;
     var phase = state.phase;
     var broadcast = state.broadcast;
@@ -682,7 +706,15 @@
    * disappears after six seconds. The conclusion they reach is "the panel is broken" and the fix
    * they need — get a fresh link — is nowhere on screen.
    */
+  var accessRefused = false;
+
   function showAccessError(message) {
+    // Latched. AccessGate falls back to the lcp_k cookie, so a page opened with no ?k= and
+    // unreadable localStorage — iOS private mode, cleared site data — showed this card and then had
+    // every card it hid put back by the first successful render: a permanent "cannot open the
+    // panel" banner sitting above a working panel.
+    accessRefused = true;
+
     L.text('access-error-message', message);
     L.show('access-error', true);
 

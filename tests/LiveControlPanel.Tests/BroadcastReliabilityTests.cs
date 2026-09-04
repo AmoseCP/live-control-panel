@@ -1,3 +1,4 @@
+using LiveControlPanel.Config;
 using LiveControlPanel.Core;
 using LiveControlPanel.Youtube;
 using Xunit;
@@ -165,6 +166,82 @@ public sealed class BroadcastReliabilityTests
         // Nothing is left looking like it never ran.
         Assert.DoesNotContain(steps, s => s.Status == "pending");
         Assert.All(steps, s => Assert.Contains(s.Status, new[] { "done", "skipped" }));
+    }
+
+    // ---------------------------------------------------------------- settings that must survive
+
+    /// <summary>
+    /// The same data-loss class SettingsPatch's own comment says was fixed, one nesting level down:
+    /// the record's sections are nullable, but the objects inside them carry initialisers, so a PUT
+    /// with a partial obs block used to reset the password, the scene names and the check lists to
+    /// their defaults. The failure would be a panel that cannot reach OBS at 04:40 with nobody able
+    /// to say why.
+    /// </summary>
+    [Fact]
+    public void A_partial_obs_save_does_not_reset_the_rest_of_the_section()
+    {
+        using var host = new TestHost();
+        host.Config.UpdateSettings(s =>
+        {
+            s.Obs.Password = "secret";
+            s.Obs.SceneCamera = "摄像机";
+            s.Obs.AudioInputName = "ProFX";
+            s.Obs.VideoSourceNames = new List<string> { "主摄像机" };
+        });
+
+        // What a partial post looks like: only the URL carries a value.
+        var patch = new ObsSettings
+        {
+            Url = "ws://localhost:4455",
+            Password = "",
+            SceneCamera = "",
+            SceneSlides = "",
+            AudioInputName = "",
+            VideoSourceNames = new List<string>(),
+        };
+
+        ApplyObsPatch(host, patch);
+
+        var obs = host.Config.Settings.Obs;
+        Assert.Equal("secret", obs.Password);
+        Assert.Equal("摄像机", obs.SceneCamera);
+        Assert.Equal("ProFX", obs.AudioInputName);
+        Assert.Equal(new[] { "主摄像机" }, obs.VideoSourceNames);
+    }
+
+    /// <summary>Mirrors what the settings endpoint does, so the rule is pinned without a TestServer.</summary>
+    private static void ApplyObsPatch(TestHost host, ObsSettings obs) =>
+        host.Config.UpdateSettings(current =>
+        {
+            if (!string.IsNullOrWhiteSpace(obs.Url)) current.Obs.Url = obs.Url;
+            if (!string.IsNullOrWhiteSpace(obs.Password)) current.Obs.Password = obs.Password;
+            if (!string.IsNullOrWhiteSpace(obs.SceneCamera)) current.Obs.SceneCamera = obs.SceneCamera;
+            if (!string.IsNullOrWhiteSpace(obs.SceneSlides)) current.Obs.SceneSlides = obs.SceneSlides;
+            if (!string.IsNullOrWhiteSpace(obs.AudioInputName)) current.Obs.AudioInputName = obs.AudioInputName;
+            if (obs.VideoSourceNames.Count > 0) current.Obs.VideoSourceNames = obs.VideoSourceNames;
+        });
+
+    // ---------------------------------------------------------------- a wedged presentation program
+
+    /// <summary>
+    /// Every COM call into the presentation program is unbounded and blocking, so one that stops
+    /// pumping used to block the whole background loop — which also carries the OBS status refresh
+    /// and the authorization countdown. The bounded wait cannot un-block that thread, but it keeps
+    /// the panel running and saying something true instead of freezing everything behind the one
+    /// feature that is explicitly optional.
+    /// </summary>
+    [Fact]
+    public void A_presentation_program_that_stops_answering_does_not_freeze_the_panel()
+    {
+        using var host = new TestHost();
+        host.Slides.BlockGetState = true;
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        host.State.RefreshSlides();
+        stopwatch.Stop();
+
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(10), $"took {stopwatch.Elapsed}");
+        Assert.False(host.State.Snapshot().Slides.Available);
     }
 
     // ---------------------------------------------------------------- reconnecting to the ingest

@@ -97,7 +97,14 @@ public sealed class StubSlideController : ISlideController
 
     public IReadOnlyList<WindowInfo> EnumerateWindows() => Array.Empty<WindowInfo>();
 
-    public SlidesState GetState() => State;
+    /// <summary>Models a presentation program that has stopped pumping messages.</summary>
+    public bool BlockGetState { get; set; }
+
+    public SlidesState GetState()
+    {
+        if (BlockGetState) Thread.Sleep(TimeSpan.FromSeconds(30));
+        return State;
+    }
 
     public SlidePreview? TryGetPreview(int? slideNumber)
     {

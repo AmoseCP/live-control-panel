@@ -40,6 +40,22 @@ public sealed class TelegramClient : ITelegramClient
                 "Telegram 未配置：设置页缺少群 ID。",
                 "Telegram is not configured: the group id is missing on the settings page."));
 
+        // Trimmed, because a bot token is pasted from BotFather and a group id from getUpdates, and
+        // both routinely arrive with a trailing newline or space. IsNullOrWhiteSpace passes those,
+        // and the token then goes into the URL — where PostAsJsonAsync throws UriFormatException,
+        // which the catch below reported as "cannot reach Telegram. Check the network." A trailing
+        // space is one of the most common misconfigurations here, and that message sent whoever hit
+        // it off to debug the church WiFi.
+        botToken = botToken.Trim();
+        chatId = chatId.Trim();
+
+        if (!IsPlausibleToken(botToken))
+            return new TelegramResult(false, new Msg(
+                "Telegram Bot Token 的格式不对。它应该形如 123456789:AA... —— 请从 BotFather 重新复制，" +
+                "注意不要带上多余的空格或换行。",
+                "The Telegram bot token is malformed. It should look like 123456789:AA… — copy it again " +
+                "from BotFather, taking care not to include stray spaces or line breaks."));
+
         var url = $"https://api.telegram.org/bot{botToken}/sendMessage";
         var payload = new { chat_id = chatId, text, disable_web_page_preview = false };
 
@@ -66,6 +82,23 @@ public sealed class TelegramClient : ITelegramClient
     /// Turns Bot API errors into instructions. FR 8 forbids showing raw technical text to operators,
     /// and chat-id mistakes are the single most common misconfiguration here.
     /// </summary>
+    /// <summary>
+    /// A token's shape, not its validity: digits, a colon, then the secret. Anything that cannot go
+    /// into a URL is caught here rather than surfacing as a connectivity problem.
+    /// </summary>
+    private static bool IsPlausibleToken(string token)
+    {
+        var colon = token.IndexOf(':');
+        if (colon <= 0 || colon == token.Length - 1) return false;
+
+        foreach (var c in token)
+        {
+            if (char.IsWhiteSpace(c) || c == '/' || c == '?' || c == '#') return false;
+        }
+
+        return token[..colon].All(char.IsAsciiDigit);
+    }
+
     private static Msg Explain(string body)
     {
         var description = "";

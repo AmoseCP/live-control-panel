@@ -221,10 +221,16 @@ public static class Endpoints
 
         // Next-slide preview. 404 when the presentation program exposes no way to render a slide —
         // the operator page hides the preview block on failure rather than showing a broken image.
-        app.MapGet("/api/slides/preview", (ISlideController slides, int? n) =>
+        app.MapGet("/api/slides/preview", (ISlideController slides, HttpContext context, int? n) =>
         {
             var preview = slides.TryGetPreview(n);
             if (preview is null) return Results.NotFound();
+
+            // Never cached. The URL varies only by slide number, so Safari's heuristic caching
+            // showed last week's slide 6 for this week's deck — and a deck edited between the
+            // run-through and the service kept showing the pre-edit image. The panel already sends
+            // no-store for its own assets for the same reason.
+            context.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
 
             return Results.File(preview.Png, "image/png",
                 lastModified: null, entityTag: null, enableRangeProcessing: false);
@@ -343,6 +349,22 @@ public static class Endpoints
                     "The match window must be between 0 and 720 minutes.")));
             }
 
+            // Refused at save, which is the only moment the operator can still fix it. At page-turn
+            // time an unparseable pattern can only report "no slide-show window found. Check that
+            // the presentation is actually presenting" — pointing at the wrong problem entirely,
+            // with no way to discover the real one.
+            if (body.Slides is { WindowTitleRegex: { Length: > 0 } pattern })
+            {
+                try { _ = Slides.SlideController.TitleRegex(pattern); }
+                catch (ArgumentException)
+                {
+                    return Results.BadRequest(new ApiResult(false, new Msg(
+                        "窗口标题正则写得不对，无法编译。留空表示只按类名匹配。",
+                        "The window title regex is not a valid pattern. Leave it empty to match on the " +
+                        "class name alone.")));
+                }
+            }
+
             // The UI promises four to six digits; enforce it here so a hand-crafted request cannot
             // set a PIN the unlock screen's numeric keyboard can never reproduce.
             if (!string.IsNullOrWhiteSpace(body.SettingsPin)
@@ -365,9 +387,22 @@ public static class Endpoints
                 current.TelegramMessageDefault = body.TelegramMessageDefault ?? current.TelegramMessageDefault;
                 if (body.Obs is { } obs)
                 {
-                    // A blank URL would crash every reconnect attempt; keep the working one.
-                    obs.Url = string.IsNullOrWhiteSpace(obs.Url) ? current.Obs.Url : obs.Url;
-                    current.Obs = obs;
+                    // Field by field, not a wholesale replace.
+                    //
+                    // This is the same data-loss class SettingsPatch's own comment above says was
+                    // fixed, one nesting level down: the record's sections are nullable, but the
+                    // objects inside them carry initialisers, so a PUT with a partial obs block
+                    // silently reset the password, the scene names and the check source lists to
+                    // their defaults. The shipped page always posts the full block — but the
+                    // Telegram test path already demonstrates partial-section posting is a pattern
+                    // here, and the failure would be a panel that cannot reach OBS at 04:40 with
+                    // nobody able to say why.
+                    if (!string.IsNullOrWhiteSpace(obs.Url)) current.Obs.Url = obs.Url;
+                    if (!string.IsNullOrWhiteSpace(obs.Password)) current.Obs.Password = obs.Password;
+                    if (!string.IsNullOrWhiteSpace(obs.SceneCamera)) current.Obs.SceneCamera = obs.SceneCamera;
+                    if (!string.IsNullOrWhiteSpace(obs.SceneSlides)) current.Obs.SceneSlides = obs.SceneSlides;
+                    if (!string.IsNullOrWhiteSpace(obs.AudioInputName)) current.Obs.AudioInputName = obs.AudioInputName;
+                    if (obs.VideoSourceNames.Count > 0) current.Obs.VideoSourceNames = obs.VideoSourceNames;
                 }
                 if (body.Slides is { } slides)
                 {

@@ -67,6 +67,12 @@ public sealed class SlideController : ISlideController
     private readonly ILogger<SlideController> _log;
     private readonly object _previewGate = new();
 
+    /// <summary>
+    /// How long a preview request waits for the one in front of it. Short: the preview is a
+    /// convenience, and the page simply hides the block when it does not arrive.
+    /// </summary>
+    private static readonly TimeSpan PreviewGateTimeout = TimeSpan.FromSeconds(2);
+
     private SlidePreview? _lastPreview;
     private DateTime _lastPreviewAt;
 
@@ -108,7 +114,15 @@ public sealed class SlideController : ISlideController
     {
         if (!Enabled) return null;
 
-        lock (_previewGate)
+        // Fail fast rather than queue behind whoever holds it.
+        //
+        // The COM export inside is unbounded, so a presentation program that has stopped pumping
+        // parks the holder indefinitely — and every later request then parked a thread-pool thread
+        // behind it too. A missing preview is a hidden block on the page; a pile-up is the panel
+        // running out of threads for the requests that matter.
+        if (!Monitor.TryEnter(_previewGate, PreviewGateTimeout)) return null;
+
+        try
         {
             var position = WpsCom.TryGetPosition();
             if (position is null) return null;
@@ -142,6 +156,10 @@ public sealed class SlideController : ISlideController
                 _log.LogDebug(ex, "Rendering a preview of slide {Slide} failed", target);
                 return null;
             }
+        }
+        finally
+        {
+            Monitor.Exit(_previewGate);
         }
     }
 
@@ -242,8 +260,15 @@ public sealed class SlideController : ISlideController
         var handle = new IntPtr(target.Handle);
         var key = new IntPtr(virtualKey);
 
-        var down = Win32.PostMessage(handle, Win32.WM_KEYDOWN, key, IntPtr.Zero);
-        var up = Win32.PostMessage(handle, Win32.WM_KEYUP, key, IntPtr.Zero);
+        // A properly formed lParam, not zero.
+        //
+        // Zero means repeat count 0, no scan code, and — for the arrow keys this sends — no
+        // extended-key flag; WM_KEYUP additionally lacks the transition and previous-state bits.
+        // Any window that inspects lParam, or that relies on TranslateMessage, discards a message
+        // shaped like that, which is consistent with the "posted keys are ignored outright"
+        // behaviour recorded here as unexplained. It costs nothing to send a real one.
+        var down = Win32.PostMessage(handle, Win32.WM_KEYDOWN, key, KeyDownLParam(virtualKey));
+        var up = Win32.PostMessage(handle, Win32.WM_KEYUP, key, KeyUpLParam(virtualKey));
 
         if (!down || !up)
         {
@@ -277,6 +302,26 @@ public sealed class SlideController : ISlideController
     /// reported as "no presentation window" rather than guessing — a wrong guess would send arrow
     /// keys into an arbitrary application.
     /// </summary>
+    /// <summary>
+    /// lParam for WM_KEYDOWN: repeat count 1, the key's scan code, and the extended-key flag for
+    /// keys that carry one (the arrows do).
+    /// </summary>
+    private static IntPtr KeyDownLParam(ushort virtualKey)
+    {
+        var scanCode = Win32.MapVirtualKey(virtualKey, Win32.MAPVK_VK_TO_VSC);
+        var lParam = 1u | (scanCode << 16);
+        if (IsExtendedKey(virtualKey)) lParam |= 1u << 24;
+        return new IntPtr(lParam);
+    }
+
+    /// <summary>The same, plus the previous-state and transition-state bits a key release carries.</summary>
+    private static IntPtr KeyUpLParam(ushort virtualKey) =>
+        new((uint)KeyDownLParam(virtualKey) | (1u << 30) | (1u << 31));
+
+    private static bool IsExtendedKey(ushort virtualKey) => virtualKey is
+        Win32.VK_LEFT or Win32.VK_RIGHT or Win32.VK_UP or Win32.VK_DOWN
+        or Win32.VK_PRIOR or Win32.VK_NEXT or Win32.VK_HOME or Win32.VK_END;
+
     internal WindowInfo? FindTargetWindow()
     {
         var settings = _config.Settings.Slides;
@@ -293,10 +338,39 @@ public sealed class SlideController : ISlideController
         Regex? regex = null;
         if (hasTitle)
         {
-            try { regex = new Regex(titleRegex!, RegexOptions.IgnoreCase); }
+            // A match timeout, because this pattern comes straight from the settings page and is
+            // evaluated against every top-level window on every page turn. A backtracking pattern is
+            // easy to write by accident, and pegging a core on a streaming PC means dropped frames
+            // mid-service.
+            // An unparseable pattern is refused at save time (see the settings endpoint), which is
+            // where the operator can still do something about it; here it can only mean a
+            // hand-edited settings file, and matching nothing is the safe answer.
+            try { regex = TitleRegex(titleRegex!); }
             catch (ArgumentException) { return null; }
         }
 
+        try
+        {
+            return MatchFirst(windows, hasClass, windowClass, regex);
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            // The timeout below is what stops a backtracking pattern pegging a core on every page
+            // turn — on a streaming PC that is dropped frames mid-service.
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Compiles a window-title pattern with a match timeout. Shared with the settings endpoint so
+    /// that what is validated on save is exactly what runs at page-turn time.
+    /// </summary>
+    internal static Regex TitleRegex(string pattern) =>
+        new(pattern, RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(100));
+
+    private static WindowInfo? MatchFirst(
+        IEnumerable<WindowInfo> windows, bool hasClass, string? windowClass, Regex? regex)
+    {
         return windows.FirstOrDefault(w =>
             w.Visible
             && (!hasClass || string.Equals(w.ClassName, windowClass, StringComparison.OrdinalIgnoreCase))

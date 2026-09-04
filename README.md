@@ -28,7 +28,7 @@
 
 ```bash
 # 需要 .NET 8 SDK
-dotnet test                                    # 317 个单元/接口测试
+dotnet test                                    # 319 个单元/接口测试
 dotnet run --project src/LiveControlPanel       # 默认 http://localhost:5088
 ```
 
@@ -237,7 +237,7 @@ sunday-service    [0]         10:30  → 1
 
 ## 测试
 
-317 个测试，全部不接触真实的 YouTube / OBS / Telegram。
+319 个测试，全部不接触真实的 YouTube / OBS / Telegram。
 
 ```bash
 dotnet test
@@ -252,7 +252,7 @@ dotnet test
 | `ConfigStoreTests` | 种子数据、删目录后重建、损坏文件降级、访问码生成 |
 | `StateManagerTests` | 四相位状态机、快照深拷贝、并发安全 |
 | `EndpointTests` | 真实路由表 + 访问码/PIN 门禁 + 各接口契约 + 临时直播默认标题 |
-| `BroadcastReliabilityTests` | OBS 连不上时停播**不谎报成功**、认领 live 广播不再重复绑定、认领保留 YouTube 的真实 lifecycle、自检不把本场当成遗留、重试不清掉前面几步的状态、OBS 重连 YouTube 摄取端这个信号能到达前端 |
+| `BroadcastReliabilityTests` | OBS 连不上时停播**不谎报成功**、认领 live 广播不再重复绑定、认领保留 YouTube 的真实 lifecycle、自检不把本场当成遗留、重试不清掉前面几步的状态、OBS 重连 YouTube 摄取端这个信号能到达前端、部分保存不再重置 OBS 那一段的其余字段、放映程序卡死时后台循环不被拖住 |
 | `SupportingTests` | obs v5 认证算法、虚拟网卡过滤、错误文案不含技术术语、重试策略、窗口匹配 |
 | `SlideControlTests` | 默认关闭、关闭时不碰 Win32/COM、诊断接口关闭时仍可用、启用后无放映时的提示 |
 | `SettingsPinTests` | PIN 为固定默认值、两台安装 PIN 相同但访问码不同、改过的 PIN 不被重置 |

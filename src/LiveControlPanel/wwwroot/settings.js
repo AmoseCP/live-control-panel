@@ -317,7 +317,11 @@
       telegramBotToken: value('tg-token'),
       telegramChatId: value('tg-chat'),
       telegramMessageDefault: value('tg-message')
-    }).then(function () {
+    }).then(function (saved) {
+      // Gated on the save. Chaining straight through meant a rejected save — a 403 after the PIN
+      // was cleared, any 4xx — silently tested the *previously stored* token and reported a pass or
+      // fail for credentials the operator had not just typed.
+      if (!saved.ok) return saved;
       return L.api.post('/api/telegram/test');
     }).then(report);
   });

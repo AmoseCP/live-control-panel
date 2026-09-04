@@ -72,6 +72,16 @@ public sealed class StateHub
     /// </summary>
     private sealed class Client
     {
+        /// <summary>
+        /// How long one send may take before the client is treated as gone.
+        ///
+        /// Without a deadline a stalled TCP connection — a locked iPad on a dying Wi-Fi association —
+        /// never faults, so the OnlyOnFaulted continuation that reaps clients never runs and the
+        /// chain simply grows: one queued task per state push, at minimum every five seconds, for as
+        /// long as the panel runs. Weeks of that is an unbounded leak held by a client that left.
+        /// </summary>
+        private static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(10);
+
         private readonly WebSocket _socket;
         private readonly object _gate = new();
         private Task _chain = Task.CompletedTask;
@@ -84,7 +94,7 @@ public sealed class StateHub
             lock (_gate)
             {
                 var send = _chain
-                    .ContinueWith(_ => SendCoreAsync(payload),
+                    .ContinueWith(_ => SendWithDeadlineAsync(payload),
                         CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default)
                     .Unwrap();
 
@@ -97,11 +107,30 @@ public sealed class StateHub
             }
         }
 
-        private async Task SendCoreAsync(byte[] payload)
+        /// <summary>
+        /// Faults on a stalled send, which is what makes the reaping continuation fire. The socket is
+        /// aborted rather than left behind: a polite close on a connection that is not answering
+        /// would hang the same way the send just did.
+        /// </summary>
+        private async Task SendWithDeadlineAsync(byte[] payload)
+        {
+            using var deadline = new CancellationTokenSource(SendTimeout);
+
+            try
+            {
+                await SendCoreAsync(payload, deadline.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+            {
+                try { _socket.Abort(); } catch (Exception) { /* already gone */ }
+                throw new WebSocketException("The websocket client stopped accepting data.");
+            }
+        }
+
+        private async Task SendCoreAsync(byte[] payload, CancellationToken ct)
         {
             if (_socket.State != WebSocketState.Open) return;
-            await _socket.SendAsync(payload, WebSocketMessageType.Text, true, CancellationToken.None)
-                .ConfigureAwait(false);
+            await _socket.SendAsync(payload, WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
         }
     }
 }

@@ -41,6 +41,11 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
     private long _lastBytesSent;
     private DateTime _lastBytesAt;
 
+    // Frame counters are cumulative for the whole output session, so the reported percentage is a
+    // delta between polls rather than the lifetime average — see RefreshStatusAsync.
+    private double _lastTotalFrames;
+    private double _lastSkippedFrames;
+
     private volatile ObsStatus _status = new(false, false, 0, null, 0, 0, Array.Empty<string>());
 
     /// <summary>Last diagnosed reason for being disconnected. Read by the pre-flight.</summary>
@@ -78,8 +83,42 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
 
     public void Start()
     {
-        _ = Task.Run(() => ConnectLoopAsync(_shutdown.Token));
-        _ = Task.Run(() => PollLoopAsync(_shutdown.Token));
+        _ = Task.Run(() => ForeverAsync(ConnectLoopAsync, nameof(ConnectLoopAsync)));
+        _ = Task.Run(() => ForeverAsync(PollLoopAsync, nameof(PollLoopAsync)));
+    }
+
+    /// <summary>
+    /// Keeps a background loop alive across anything that escapes it.
+    ///
+    /// Both loops were fire-and-forget with no outer catch and no observation of the returned task,
+    /// so a single unexpected throw out of the handlers — <c>Diagnose</c>, <c>FailAllPending</c>,
+    /// <c>Publish</c> — ended OBS reconnection permanently and silently for the rest of the process's
+    /// life. On a panel that runs for weeks as a logon task that is a broadcast lost with no message
+    /// anywhere. The <c>Publish</c> call in the connect loop's finally is already defensively
+    /// wrapped with a comment describing exactly this hazard; this generalises that instinct rather
+    /// than patching one more call site.
+    /// </summary>
+    private async Task ForeverAsync(Func<CancellationToken, Task> loop, string name)
+    {
+        while (!_shutdown.IsCancellationRequested)
+        {
+            try
+            {
+                await loop(_shutdown.Token).ConfigureAwait(false);
+                return;   // A clean return means shutdown.
+            }
+            catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "OBS {Loop} threw; restarting it", name);
+
+                try { await Task.Delay(TimeSpan.FromSeconds(1), _shutdown.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) { return; }
+            }
+        }
     }
 
     // ---------------------------------------------------------------- commands
@@ -159,7 +198,13 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
 
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct, _shutdown.Token);
             timeout.CancelAfter(RequestTimeout);
-            using var reg = timeout.Token.Register(() => tcs.TrySetException(new ObsUnavailableException()));
+
+            // A distinct exception, because "OBS did not answer in six seconds" and "OBS is not
+            // running" need opposite advice. Both used to render as "OBS is not connected. Check
+            // that OBS Studio is open" — so a StartStream issued while the encoder was still
+            // initialising told an operator at 04:40 to open a program that was open, visible and
+            // streaming.
+            using var reg = timeout.Token.Register(() => tcs.TrySetException(new ObsTimeoutException(requestType)));
 
             return await tcs.Task.ConfigureAwait(false);
         }
@@ -470,7 +515,30 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
         var reconnecting = stream?["outputReconnecting"]?.GetValue<bool>() ?? false;
         var congestion = stream?["outputCongestion"]?.GetValue<double>() ?? 0;
 
-        var dropped = totalFrames > 0 ? Math.Round(skippedFrames / totalFrames * 100, 2) : 0;
+        // Measured between polls, not since the output started.
+        //
+        // The cumulative ratio can only ever fall as a healthy service goes on: thirty seconds of
+        // total frame loss in a two-hour stream works out to about 0.4%, so the UI's 1% and 5%
+        // thresholds could never fire on anything that went wrong late in a service — which is when
+        // things go wrong. A window between two polls is what the operator can actually act on.
+        var dropped = _status.DroppedFramesPercent;
+
+        if (_lastTotalFrames > 0 && totalFrames >= _lastTotalFrames)
+        {
+            var frameDelta = totalFrames - _lastTotalFrames;
+            var skippedDelta = Math.Max(0, skippedFrames - _lastSkippedFrames);
+
+            if (frameDelta > 0) dropped = Math.Round(skippedDelta / frameDelta * 100, 2);
+        }
+        else if (totalFrames < _lastTotalFrames)
+        {
+            // A new output session; the counters restarted.
+            dropped = 0;
+        }
+
+        _lastTotalFrames = totalFrames;
+        _lastSkippedFrames = skippedFrames;
+        if (!streaming) dropped = 0;
 
         var now = DateTime.UtcNow;
         var kbits = _status.KbitsPerSec;
@@ -621,6 +689,22 @@ public sealed class ObsClient : IObsClient, IAsyncDisposable
 public sealed class ObsUnavailableException : Exception
 {
     public ObsUnavailableException() : base("OBS is not connected.") { }
+}
+
+/// <summary>
+/// OBS is connected but did not answer in time. Deliberately not an
+/// <see cref="ObsUnavailableException"/>: telling an operator to open a program they are looking at
+/// is worse than saying nothing, and the recovery is different — wait and retry, not go and start it.
+/// </summary>
+public sealed class ObsTimeoutException : Exception
+{
+    public ObsTimeoutException(string requestType)
+        : base($"OBS did not answer the {requestType} request in time.")
+    {
+        RequestType = requestType;
+    }
+
+    public string RequestType { get; }
 }
 
 public sealed class ObsRequestException : Exception

@@ -164,8 +164,13 @@ public sealed class Orchestrator
         // that lost attempt — adopt it instead of creating a duplicate.
         try
         {
+            // Same title AND created today. Titles carry the date only because the shipped
+            // TitleFormat happens to contain {M}/{D}/{YYYY} — an ad-hoc broadcast with a hand-typed
+            // title, or an edited format, breaks that silently. Without the date test the panel
+            // would adopt an unfinished broadcast from a previous week and stream today's service
+            // into last week's watch URL, which is also the URL Telegram then distributes.
             var leftover = (await _youtube.ListUnfinishedBroadcastsAsync(ct).ConfigureAwait(false))
-                .FirstOrDefault(b => b.Title == today.Title);
+                .FirstOrDefault(b => b.Title == today.Title && IsFromToday(b));
             if (leftover is not null)
             {
                 // The adopted broadcast's real lifecycle, not a flat "created".
@@ -238,7 +243,7 @@ public sealed class Orchestrator
                 "page and enter it in OBS."));
 
         await _youtube.BindStreamAsync(broadcast.Id!, streamId, ct).ConfigureAwait(false);
-        _state.Mutate(s => s.Broadcast!.Status = BroadcastStatus.Bound);
+        _state.Mutate(s => { if (s.Broadcast is not null) s.Broadcast.Status = BroadcastStatus.Bound; });
         return new StepMessage(new Msg("已绑定推流密钥", "Stream key bound"));
     }
 
@@ -260,7 +265,7 @@ public sealed class Orchestrator
 
         await using var stream = File.OpenRead(path);
         await _youtube.SetThumbnailAsync(broadcast.Id!, stream, ContentType(path), ct).ConfigureAwait(false);
-        _state.Mutate(s => s.Broadcast!.ThumbnailUploaded = true);
+        _state.Mutate(s => { if (s.Broadcast is not null) s.Broadcast.ThumbnailUploaded = true; });
         return new StepMessage(new Msg("封面已上传", "Thumbnail uploaded"));
     }
 
@@ -302,7 +307,7 @@ public sealed class Orchestrator
 
             if (status == "live")
             {
-                _state.Mutate(s => s.Broadcast!.Status = BroadcastStatus.Live);
+                _state.Mutate(s => { if (s.Broadcast is not null) s.Broadcast.Status = BroadcastStatus.Live; });
                 return new StepMessage(new Msg("YouTube 已上线", "YouTube is live"));
             }
 
@@ -322,7 +327,7 @@ public sealed class Orchestrator
             }
 
             if (status == "testing")
-                _state.Mutate(s => s.Broadcast!.Status = BroadcastStatus.Testing);
+                _state.Mutate(s => { if (s.Broadcast is not null) s.Broadcast.Status = BroadcastStatus.Testing; });
 
             await Task.Delay(LivePollInterval, ct).ConfigureAwait(false);
         }
@@ -391,7 +396,7 @@ public sealed class Orchestrator
                     "YouTube Studio later that it shows as finished."));
             }
 
-            _state.Mutate(s => s.Broadcast!.Status = BroadcastStatus.Complete);
+            _state.Mutate(s => { if (s.Broadcast is not null) s.Broadcast.Status = BroadcastStatus.Complete; });
         }
 
         _state.RecordAction(new Msg("停止直播", "Stopped the broadcast"), broadcast?.Title);
@@ -473,6 +478,15 @@ public sealed class Orchestrator
     /// so bind, thumbnail and await-live all skip themselves; anything bound but not yet started
     /// adopts as Bound so bind is not attempted twice.
     /// </summary>
+    /// <summary>
+    /// Whether a leftover was created today, by the panel's own clock.
+    ///
+    /// A broadcast still on air from earlier today is adoptable; one from last Wednesday is a
+    /// leftover for the pre-flight to clean up, never something to resume into.
+    /// </summary>
+    private bool IsFromToday(BroadcastInfo broadcast) =>
+        broadcast.CreatedAt is not { } created || created.ToLocalTime().Date == _state.Clock().Date;
+
     private static string AdoptedStatus(string? lifeCycleStatus) => lifeCycleStatus switch
     {
         "live" or "liveStarting" => BroadcastStatus.Live,
@@ -481,6 +495,14 @@ public sealed class Orchestrator
         _ => BroadcastStatus.Created,
     };
 
+    /*
+     * Every mutation of s.Broadcast above is null-guarded rather than null-forgiving.
+     *
+     * RefreshScheduleLocked can set s.Broadcast = null on the day rollover, which is reachable for a
+     * service that crosses midnight and has not started streaming — status still Created or Bound,
+     * Obs.Streaming false. The NRE would be thrown inside Mutate while the state lock is held,
+     * aborting the mutation and skipping the push to every connected page.
+     */
     private BroadcastState RequireBroadcast() =>
         _state.Read(s => s.Broadcast) is { Id: not null } broadcast
             ? broadcast

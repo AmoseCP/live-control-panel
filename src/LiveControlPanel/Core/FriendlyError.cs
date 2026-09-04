@@ -19,6 +19,12 @@ public static class FriendlyError
             "YouTube authorization has expired, so no broadcast can be created. Use \"re-authorize\" on " +
             "the settings page."),
 
+        Obs.ObsTimeoutException => new Msg(
+            "OBS 没有及时响应。它可能正忙（比如编码器刚启动），请等十几秒后点「重试这一步」。" +
+            "OBS 是开着的，不用去启动它。",
+            "OBS did not answer in time. It may be busy — the encoder starting up, for instance. Wait " +
+            "about fifteen seconds and retry this step. OBS is running; there is no need to start it."),
+
         ObsUnavailableException => new Msg(
             "OBS 没有连上。请确认 OBS Studio 已经打开，然后重试这一步。",
             "OBS is not connected. Check that OBS Studio is open, then retry this step."),

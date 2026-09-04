@@ -48,8 +48,9 @@ public sealed class AccessInfoProvider
         var mdnsHost = MdnsHostName();
         var mdnsUrl = mdnsHost is null ? null : $"http://{mdnsHost}:{port}/?k={code}";
 
-        // The QR encodes the first real LAN address; falling back to mDNS then localhost keeps the
-        // endpoint answering even on a machine with no active adapter.
+        // The QR encodes the best LAN address — see UsableAddresses for what "best" means and why it
+        // is not simply whichever adapter Windows enumerated first. Falling back to mDNS then
+        // localhost keeps the endpoint answering even on a machine with no active adapter.
         var qrTarget = addresses.FirstOrDefault()?.Url ?? mdnsUrl ?? $"http://localhost:{port}/?k={code}";
 
         return new AccessInfo(
@@ -61,9 +62,20 @@ public sealed class AccessInfoProvider
     }
 
     /// <summary>IPv4 addresses on up, non-virtual, non-loopback adapters.</summary>
+    /// <summary>
+    /// LAN addresses an iPad could reach, best first.
+    ///
+    /// The order is deliberate, and it decides what the QR code encodes.
+    /// <see cref="NetworkInterface.GetAllNetworkInterfaces"/> returns adapters in an unspecified
+    /// order that can change across reboots and driver updates, so a PC wired to an AV production
+    /// LAN *and* joined to the church WiFi would intermittently publish the AV-network address —
+    /// the iPad scans it, times out, and nothing on the page says which of the listed addresses to
+    /// try instead. An adapter carrying a default gateway is the one that reaches the rest of the
+    /// building; among equals, the ordering is at least stable rather than arbitrary.
+    /// </summary>
     internal static List<(string Address, string AdapterName)> UsableAddresses()
     {
-        var results = new List<(string, string)>();
+        var results = new List<(string Address, string AdapterName, bool Routable, int Order)>();
 
         foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
         {
@@ -71,7 +83,18 @@ public sealed class AccessInfoProvider
             if (nic.NetworkInterfaceType is NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel) continue;
             if (IsVirtual(nic.Name) || IsVirtual(nic.Description)) continue;
 
-            foreach (var unicast in nic.GetIPProperties().UnicastAddresses)
+            var properties = nic.GetIPProperties();
+
+            var routable = properties.GatewayAddresses
+                .Any(g => g.Address is { } address
+                          && address.AddressFamily == AddressFamily.InterNetwork
+                          && !address.Equals(IPAddress.Any));
+
+            // Wireless first among equals: the iPad is on WiFi, so an address the PC reaches over
+            // the same radio network is the one most likely to answer.
+            var order = nic.NetworkInterfaceType == NetworkInterfaceType.Wireless80211 ? 0 : 1;
+
+            foreach (var unicast in properties.UnicastAddresses)
             {
                 if (unicast.Address.AddressFamily != AddressFamily.InterNetwork) continue;
                 if (IPAddress.IsLoopback(unicast.Address)) continue;
@@ -79,11 +102,17 @@ public sealed class AccessInfoProvider
                 var text = unicast.Address.ToString();
                 if (text.StartsWith("169.254.", StringComparison.Ordinal)) continue; // link-local, unroutable
 
-                results.Add((text, nic.Name));
+                results.Add((text, nic.Name, routable, order));
             }
         }
 
-        return results;
+        return results
+            .OrderByDescending(r => r.Routable)
+            .ThenBy(r => r.Order)
+            .ThenBy(r => r.AdapterName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(r => r.Address, StringComparer.Ordinal)
+            .Select(r => (r.Address, r.AdapterName))
+            .ToList();
     }
 
     internal static bool IsVirtual(string? nameOrDescription)
