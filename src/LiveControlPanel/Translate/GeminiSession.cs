@@ -147,7 +147,10 @@ public sealed class GeminiWebSocketSession : IGeminiSession
             }
             catch (WebSocketException ex)
             {
-                throw new GeminiSessionException("The Gemini session dropped.", ex);
+                // Only the WebSocketErrorCode, not the message: the API key is in the endpoint's
+                // query string, and this exception's text is the one place it could plausibly ride
+                // along into a plaintext log kept for 31 days on a shared PC.
+                throw new GeminiSessionException($"The Gemini session dropped ({ex.WebSocketErrorCode}).");
             }
 
             assembled.Write(buffer, 0, count);

@@ -348,7 +348,16 @@ public sealed class TranslationService : ITranslationService, IAsyncDisposable
                 _lastError = message;
                 _firstOutcome?.TrySetResult(message);
                 Publish(running: true);
-                _log.LogWarning(ex, "Gemini translation session ended");
+                // The exception type and our own message, not the raw exception.
+                //
+                // The API key travels in the endpoint's query string, and this log is plaintext with
+                // a 31-day retention on a PC seven people share. .NET's WebSocket failures normally
+                // carry only the host, so a leak here is unlikely rather than certain — but the
+                // project already takes exactly this precaution for the Telegram token (see the
+                // HttpClient log-level override in Program.cs), and being consistent about it costs
+                // one line. The type name is what actually helps when reading the log anyway.
+                _log.LogWarning("Gemini translation session ended: {Error} ({Type})",
+                    message.En, ex.GetType().Name);
             }
             finally
             {
