@@ -32,6 +32,8 @@
     loadAccessInfo();
     loadTemplates();
     loadAuthStatus();
+    // The device list carries a translated "(none selected)" entry, so it is rebuilt too.
+    loadCaptureDevices();
   };
 
   /* ---- unlock ------------------------------------------------------------ */
@@ -120,6 +122,7 @@
     value('obs-scene-slides', obs.sceneSlides);
     value('obs-audio', obs.audioInputName);
     value('obs-video', (obs.videoSourceNames || []).join(', '));
+    value('obs-frozen', (obs.frozenFrameSourceNames || []).join(', '));
 
     var slides = settings.slides || {};
     var enabled = document.getElementById('slides-enabled');
@@ -134,6 +137,107 @@
     var window_ = settings.matchWindow || {};
     value('window-before', window_.beforeMinutes);
     value('window-after', window_.afterMinutes);
+
+    fillCaptureReset();
+  }
+
+  /* ---- capture-card recovery --------------------------------------------- */
+
+  function fillCaptureReset() {
+    var capture = settings.captureReset || {};
+
+    var enabled = document.getElementById('capture-enabled');
+    if (enabled) enabled.checked = !!capture.enabled;
+
+    value('capture-obs-input', capture.obsInputName);
+    loadCaptureDevices();
+  }
+
+  /*
+   * Present devices only, and the class-dangerous ones are filtered out server-side. The picker
+   * shows the class alongside the name because "AVerMedia HDMI Capture" and the same card's audio
+   * endpoint look nearly identical by name alone.
+   */
+  function loadCaptureDevices() {
+    L.api.get('/api/diag/usb-devices').then(function (result) {
+      var element = document.getElementById('capture-device');
+      if (!element) return;
+
+      var capture = (settings && settings.captureReset) || {};
+      var devices = result.data;
+
+      if (!Array.isArray(devices)) {
+        L.toast(t('settings.captureDevicesFailed'), 'bad');
+        return;
+      }
+
+      element.innerHTML = '';
+      element.appendChild(deviceOption('', t('settings.captureDeviceNone')));
+
+      var found = false;
+      devices.forEach(function (device) {
+        var label = device.name + '　·　' + (device.class || '?') +
+          (device.status && device.status !== 'OK' ? '　·　' + device.status : '');
+        element.appendChild(deviceOption(device.instanceId, label));
+        if (device.instanceId === capture.deviceInstanceId) found = true;
+      });
+
+      // A configured device Windows no longer reports stays visible and stays selected, so the
+      // admin can see *what* is missing instead of the field silently emptying itself.
+      if (capture.deviceInstanceId && !found) {
+        element.appendChild(deviceOption(capture.deviceInstanceId,
+          (capture.deviceName || capture.deviceInstanceId) + '　·　（?）'));
+      }
+
+      element.value = capture.deviceInstanceId || '';
+    });
+  }
+
+  function deviceOption(v, label) {
+    var element = document.createElement('option');
+    element.value = v;
+    element.textContent = label;
+    return element;
+  }
+
+  L.on('btn-list-devices', loadCaptureDevices);
+
+  /*
+   * The capture-reset section of the save body.
+   *
+   * The device picker fills in asynchronously — the WMI query behind it routinely takes one to
+   * three seconds — and it is left empty when that query fails. Reading an unpopulated <select>
+   * yields '', and because the server replaces the whole section, that silently erased the
+   * configured capture card whenever an administrator saved *anything* within those seconds. The
+   * reset button then disappeared from the operator page with no message anywhere, and nobody found
+   * out until 04:40, when it was needed.
+   *
+   * So a selection is only reported when the picker can actually represent one. An empty picker
+   * means "I do not know", not "the administrator chose nothing".
+   */
+  function captureResetBody() {
+    var stored = settings.captureReset || {};
+    var picker = document.getElementById('capture-device');
+    var populated = !!picker && picker.options.length > 0;
+
+    return {
+      enabled: !!(document.getElementById('capture-enabled') || {}).checked,
+      deviceInstanceId: populated ? picker.value : (stored.deviceInstanceId || ''),
+      deviceName: populated ? selectedDeviceName() : (stored.deviceName || ''),
+      obsInputName: value('capture-obs-input')
+    };
+  }
+
+  /** The chosen device's display name, so the settings page can show what is configured. */
+  function selectedDeviceName() {
+    var element = document.getElementById('capture-device');
+    if (!element || !element.value) return '';
+
+    var option = element.options[element.selectedIndex];
+    if (!option) return '';
+
+    // Strip the class/status suffix this page appended when it built the option.
+    return option.textContent.split('\u3000·\u3000')[0];
   }
 
   L.on('btn-save', function () {
@@ -150,8 +254,10 @@
         sceneCamera: value('obs-scene-camera'),
         sceneSlides: value('obs-scene-slides'),
         audioInputName: value('obs-audio'),
-        videoSourceNames: splitList(value('obs-video'))
+        videoSourceNames: splitList(value('obs-video')),
+        frozenFrameSourceNames: splitList(value('obs-frozen'))
       },
+      captureReset: captureResetBody(),
       slides: {
         enabled: !!(document.getElementById('slides-enabled') || {}).checked,
         windowClass: value('slides-class'),
@@ -174,7 +280,14 @@
 
     L.api.put('/api/settings', body).then(function (result) {
       report(result);
-      if (result.ok && newPin) L.setSettingsPin(newPin);
+      if (!result.ok) return;
+
+      if (newPin) L.setSettingsPin(newPin);
+
+      // Keep the in-memory copy in step: the device picker rebuilds itself from it, and a stale
+      // copy would show the previously selected card as still selected after a change.
+      settings.obs = body.obs;
+      settings.captureReset = body.captureReset;
     });
   });
 

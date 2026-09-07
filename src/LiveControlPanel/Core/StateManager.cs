@@ -162,6 +162,12 @@ public sealed class StateManager
             _state.Today = null;
             _state.Steps = new List<StepState>();
             _state.Telegram = new TelegramState();
+
+            // Retired with the rest of yesterday's work. The note beside the button renders only
+            // HH:mm, so Wednesday's 04:41 reset read as "already tried this morning" to Thursday's
+            // operator — who then did not try it, which is precisely the opposite of what the field
+            // is for.
+            _state.CaptureReset.LastResetAt = null;
         }
         else if (_state.Today?.ScheduledStart is { } scheduled && scheduled.Date < now.Date
             && _state.Broadcast is null && _state.Today.Manual)
@@ -205,6 +211,24 @@ public sealed class StateManager
         }
 
         _state.Phase = DerivePhase();
+        RefreshCaptureResetLocked();
+    }
+
+    /// <summary>
+    /// Mirrors the capture-reset configuration onto the pushed state, so the operator page can show
+    /// the button only where it exists. Kept here rather than set once at startup because settings
+    /// are editable while the panel runs, and a button that appears only after a restart would be
+    /// reported as "the setting did not save".
+    /// </summary>
+    private void RefreshCaptureResetLocked()
+    {
+        var settings = _config.Settings.CaptureReset;
+
+        _state.CaptureReset.Enabled =
+            settings.Enabled && !string.IsNullOrWhiteSpace(settings.DeviceInstanceId);
+
+        _state.CaptureReset.DeviceName =
+            string.IsNullOrWhiteSpace(settings.DeviceName) ? null : settings.DeviceName;
     }
 
     private string DerivePhase()

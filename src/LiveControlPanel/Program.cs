@@ -2,6 +2,7 @@ using System.Runtime.Versioning;
 using LiveControlPanel.Api;
 using LiveControlPanel.Config;
 using LiveControlPanel.Core;
+using LiveControlPanel.Devices;
 using LiveControlPanel.Net;
 using LiveControlPanel.Notify;
 using LiveControlPanel.Obs;
@@ -86,6 +87,10 @@ public static class Program
         builder.Services.AddSingleton<IYouTubeClient, YouTubeClient>();
         builder.Services.AddSingleton<ObsClient>();
         builder.Services.AddSingleton<IObsClient>(sp => sp.GetRequiredService<ObsClient>());
+        // Capture-card recovery. Inert until switched on in settings: nothing here touches a device
+        // unless an administrator has chosen one.
+        builder.Services.AddSingleton<IDeviceResetter, WmiDeviceResetter>();
+        builder.Services.AddSingleton<CaptureRecovery>();
         builder.Services.AddSingleton<Preflight>();
         builder.Services.AddSingleton<Orchestrator>();
         builder.Services.AddSingleton<NotificationService>();

@@ -1,5 +1,6 @@
 using LiveControlPanel.Config;
 using LiveControlPanel.Core;
+using LiveControlPanel.Devices;
 using LiveControlPanel.Slides;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -37,9 +38,25 @@ public sealed class TestHost : IDisposable
         Obs = new FakeObsClient();
         Telegram = new FakeTelegramClient();
 
+        Devices = new FakeDeviceResetter();
+
         Orchestrator = new Orchestrator(Config, State, YouTube, Obs, NullLogger<Orchestrator>.Instance);
         Notifications = new NotificationService(Config, State, Telegram);
-        Preflight = new Preflight(Config, Obs, YouTube, State, NullLogger<Preflight>.Instance);
+        Preflight = new Preflight(Config, Obs, YouTube, State, NullLogger<Preflight>.Instance)
+        {
+            // The frozen-frame check waits a real second and a half between samples. What is under
+            // test is the comparison and the message, not the wait.
+            FreezeSampleGap = TimeSpan.FromMilliseconds(10),
+        };
+
+        CaptureRecovery = new CaptureRecovery(
+            Config, State, Devices, Obs, NullLogger<CaptureRecovery>.Instance)
+        {
+            // Real waits would cost five seconds a case; the sequencing is what is under test.
+            SettleDelay = TimeSpan.FromMilliseconds(10),
+            ReadyDelay = TimeSpan.FromMilliseconds(10),
+            EnableRetryDelay = TimeSpan.FromMilliseconds(10),
+        };
     }
 
     public string Root { get; }
@@ -51,9 +68,11 @@ public sealed class TestHost : IDisposable
     public FakeYouTubeClient YouTube { get; }
     public FakeObsClient Obs { get; }
     public FakeTelegramClient Telegram { get; }
+    public FakeDeviceResetter Devices { get; }
     public Orchestrator Orchestrator { get; }
     public NotificationService Notifications { get; }
     public Preflight Preflight { get; }
+    public CaptureRecovery CaptureRecovery { get; }
 
     /// <summary>
     /// Pins "today" so orchestration tests do not depend on the day they are run. Uses the same
@@ -66,6 +85,19 @@ public sealed class TestHost : IDisposable
             Title = title,
             ScheduledStart = new DateTime(2026, 8, 5, 18, 0, 0),
             Manual = true,
+        });
+
+    /// <summary>
+    /// Configures capture-card recovery the way a deployed panel would: switched on, with a device
+    /// chosen by an administrator and the OBS source to re-open afterwards.
+    /// </summary>
+    public void EnableCaptureReset(string obsInputName = "主摄像机") =>
+        Config.UpdateSettings(s =>
+        {
+            s.CaptureReset.Enabled = true;
+            s.CaptureReset.DeviceInstanceId = FakeDeviceResetter.CaptureCardId;
+            s.CaptureReset.DeviceName = "AVerMedia HDMI Capture";
+            s.CaptureReset.ObsInputName = obsInputName;
         });
 
     /// <summary>Writes a real file so the thumbnail step has something to upload.</summary>

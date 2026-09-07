@@ -146,6 +146,14 @@
   <p class="subtle" style="margin:0"><span class="dot" id="dot-obs"></span><span id="obs-text">OBS —</span></p>
   <p class="subtle" style="margin:6px 0 0"><span class="dot" id="dot-auth"></span><span id="auth-text">—</span></p>
   <p class="subtle" id="last-action" style="margin:6px 0 0"></p>
+  <!--
+    Only appears where an administrator has configured it. This is the recovery for a capture card
+    that has wedged — restarting the camera and restarting OBS both do nothing to that, and the
+    alternative is rebooting the PC or reaching behind it in the dark.
+  -->
+  <p class="subtle hidden" id="capture-reset-note" style="margin:6px 0 0"></p>
+  <button class="ghost hidden" id="btn-reset-capture" style="margin-top:10px"
+          data-i18n="status.resetCapture">重置采集卡</button>
   <button class="ghost" id="btn-refresh" style="margin-top:10px" data-i18n="status.recheck">重新自检</button>
   <button class="ghost" id="btn-settings" data-i18n="status.settings">设置 →</button>
 </section>

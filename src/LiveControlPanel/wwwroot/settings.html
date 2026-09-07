@@ -100,9 +100,31 @@
     <input type="text" id="obs-audio">
     <label for="obs-video" data-i18n="settings.obsVideo">画面来源名（用于自检，多个用逗号分隔）</label>
     <input type="text" id="obs-video">
+    <label for="obs-frozen" data-i18n="settings.obsFrozen">检查画面是否静止的来源（只填摄像机，多个用逗号分隔）</label>
+    <input type="text" id="obs-frozen">
+    <p class="subtle" style="margin-top:6px" data-i18n="settings.obsFrozenHint" data-i18n-html="1"></p>
     <button class="ghost" style="margin-top:10px" id="btn-list-inputs"
             data-i18n="settings.obsListInputs">列出 OBS 里的输入名</button>
     <pre class="linkbox hidden" id="obs-inputs" style="margin-top:10px"></pre>
+  </section>
+
+  <section class="card">
+    <h2 data-i18n="settings.captureHeading">采集卡恢复</h2>
+    <p class="subtle" style="margin-top:0" data-i18n="settings.captureHint" data-i18n-html="1"></p>
+    <label style="display:flex;align-items:center;gap:10px;font-size:1rem;color:var(--text)">
+      <input type="checkbox" id="capture-enabled" style="width:22px;height:22px;min-height:0">
+      <span data-i18n="settings.captureEnable">在操作页显示「重置采集卡」按钮</span>
+    </label>
+
+    <label for="capture-device" data-i18n="settings.captureDevice">要重置的设备（选采集卡本身，不要选 USB 集线器）</label>
+    <select id="capture-device"></select>
+    <button class="ghost" style="margin-top:10px" id="btn-list-devices"
+            data-i18n="settings.captureListDevices">重新读取设备列表</button>
+
+    <label for="capture-obs-input" data-i18n="settings.captureObsInput">重置后要重新打开的 OBS 来源（可留空）</label>
+    <input type="text" id="capture-obs-input">
+
+    <p class="subtle" style="margin-bottom:0" data-i18n="settings.captureWarning" data-i18n-html="1"></p>
   </section>
 
   <section class="card">

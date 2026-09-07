@@ -20,6 +20,15 @@ public sealed class Preflight
     /// <summary>Peak (0..1) above which we consider the mixer to be producing sound.</summary>
     private const double AudioActivityThreshold = 0.0005;
 
+    /// <summary>
+    /// Gap between the two frames compared for the frozen-picture check.
+    ///
+    /// Paid once per pre-flight, not once per source: every first frame is taken, then one wait,
+    /// then every second frame. A second and a half is many frames at any sane frame rate, so a
+    /// live camera cannot produce two identical ones across it.
+    /// </summary>
+    internal TimeSpan FreezeSampleGap { get; set; } = TimeSpan.FromMilliseconds(1500);
+
     private readonly ConfigStore _config;
     private readonly IObsClient _obs;
     private readonly IYouTubeClient _youtube;
@@ -271,8 +280,9 @@ public sealed class Preflight
     private async Task<PreflightItem> CheckVideoAsync(CancellationToken ct)
     {
         var sources = _config.Settings.Obs.VideoSourceNames;
+        var watched = _config.Settings.Obs.FrozenFrameSourceNames;
 
-        if (sources.Count == 0)
+        if (sources.Count == 0 && watched.Count == 0)
             return Ok("video", (
                 "未配置画面来源名称，已跳过检查。可在设置页填写采集卡与电视采集源的名称。",
                 "No video source names configured; check skipped. They can be filled in on the settings page."));
@@ -307,7 +317,156 @@ public sealed class Preflight
                 $"OBS has no video source called {string.Join(", ", unknown.Select(u => $"\"{u}\""))}. " +
                 "Ask the administrator to check the names on the settings page."));
 
+        // Everything above answers "is there a picture at all". This answers "is the picture
+        // moving", which is the question the capture card's own "No Signal" placeholder defeats:
+        // to OBS that placeholder is a perfectly good picture and the source reports as active.
+        var scan = await ScanWatchedSourcesAsync(watched, ct).ConfigureAwait(false);
+
+        // A name OBS does not know is reported, not skipped. Silently skipping it turned a typo in
+        // the settings field into a green checklist — the one outcome this check exists to prevent.
+        if (scan.Unknown.Count > 0)
+            return Fail("video", (
+                $"设置里要检查画面是否静止的来源{string.Join("、", scan.Unknown.Select(u => $"「{u}」"))}" +
+                "在 OBS 里不存在，这一项没有真正检查。请让管理员在设置页核对名称。",
+                $"The source{(scan.Unknown.Count > 1 ? "s" : "")} configured for the frozen-picture check " +
+                $"({string.Join(", ", scan.Unknown.Select(u => $"\"{u}\""))}) " +
+                "do not exist in OBS, so that check did not actually run. Ask the administrator to check " +
+                "the names on the settings page."));
+
+        if (scan.Frozen is { } frozen) return FrozenVideo(frozen);
+
         return Ok("video", ("画面正常。", "Video is fine."));
+    }
+
+    /// <summary>What the frozen-picture pass found: at most one frozen source, plus any bad names.</summary>
+    private sealed record WatchedScan(string? Frozen, List<string> Unknown);
+
+    /// <summary>
+    /// The first source whose picture has not changed at all, or null.
+    ///
+    /// Only sources currently on the program output are judged. A source that OBS has deactivated
+    /// because no scene is showing it would look frozen for a reason that has nothing to do with the
+    /// camera, and a check that cries wolf is worse than no check — the operator learns to click
+    /// past the whole checklist.
+    /// </summary>
+    private async Task<WatchedScan> ScanWatchedSourcesAsync(IReadOnlyList<string> names, CancellationToken ct)
+    {
+        var unknown = new List<string>();
+        if (names.Count == 0) return new WatchedScan(null, unknown);
+
+        // Existence is checked against OBS's own input list, the way the audio check does it.
+        // IsSourceActiveAsync cannot answer this on its own: it returns null both for "OBS has
+        // never heard of this" and for "the request failed", and those need opposite treatment.
+        IReadOnlyList<string> inputs;
+        try
+        {
+            inputs = await _obs.GetInputNamesAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "Listing OBS inputs for the frozen-picture check failed");
+            inputs = Array.Empty<string>();
+        }
+
+        // An empty list means the request failed, not that OBS has no inputs. Calling every watched
+        // name unknown on that basis would be a false alarm of exactly the kind this check must not
+        // raise, so name-checking is skipped and only the freeze comparison runs.
+        var canCheckNames = inputs.Count > 0;
+
+        var first = new List<(string Name, byte[] Frame)>();
+
+        foreach (var name in names)
+        {
+            if (canCheckNames
+                && !inputs.Any(i => string.Equals(i, name, StringComparison.OrdinalIgnoreCase)))
+            {
+                unknown.Add(name);
+                continue;
+            }
+
+            if (await _obs.IsSourceActiveAsync(name, ct).ConfigureAwait(false) is not true) continue;
+
+            var frame = await SampleAsync(name, ct).ConfigureAwait(false);
+            if (frame is not null) first.Add((name, frame));
+        }
+
+        if (unknown.Count > 0) return new WatchedScan(null, unknown);
+
+        // Nothing to compare: OBS could not render any of them. "Cannot tell", not "no picture".
+        if (first.Count == 0) return new WatchedScan(null, unknown);
+
+        try { await Task.Delay(FreezeSampleGap, ct).ConfigureAwait(false); }
+        catch (OperationCanceledException) { return new WatchedScan(null, unknown); }
+
+        foreach (var (name, before) in first)
+        {
+            var after = await SampleAsync(name, ct).ConfigureAwait(false);
+            if (FrameFreeze.LooksFrozen(before, after)) return new WatchedScan(name, unknown);
+        }
+
+        return new WatchedScan(null, unknown);
+    }
+
+    /// <summary>
+    /// One frame, or null for any reason at all.
+    ///
+    /// The whole pre-flight is wrapped in this posture: a single failed OBS request must never take
+    /// the checklist down with it. An operator who taps "run the checks again" and gets a blank
+    /// panel has lost the one screen that was going to tell them what is wrong.
+    /// </summary>
+    private async Task<byte[]?> SampleAsync(string sourceName, CancellationToken ct)
+    {
+        try
+        {
+            return await _obs.GetSourceFrameAsync(sourceName, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "Sampling a frame of {Source} failed", sourceName);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The message that took the longest to get right, because the obvious advice is wrong: the
+    /// operator's instinct is to restart the camera and restart OBS, and on this failure neither
+    /// does anything — the capture card is wedged and only re-enumerating the USB device clears it.
+    /// So the message says that outright, and offers the one action that helps.
+    /// </summary>
+    private PreflightItem FrozenVideo(string source)
+    {
+        var canReset = _config.Settings.CaptureReset.Enabled
+                       && !string.IsNullOrWhiteSpace(_config.Settings.CaptureReset.DeviceInstanceId);
+
+        var zh = $"画面来源「{source}」有图像，但一秒多之内完全没有变化 —— 通常是摄像机没信号，" +
+                 "或者采集卡卡住了（画面上可能是采集卡自己的 No Signal 提示图）。" +
+                 "先看一眼摄像机是否开机、HDMI 是否插在采集卡的 HDMI IN。";
+
+        var en = $"Video source \"{source}\" has a picture, but it did not change at all over more than a " +
+                 "second — usually the camera has no signal, or the capture card has wedged (what you are " +
+                 "seeing may be the card's own \"No Signal\" screen). First check that the camera is on and " +
+                 "that HDMI goes into the card's HDMI IN.";
+
+        zh += canReset
+            ? "如果摄像机确实是开着的，点下面的「重置采集卡」—— 重启摄像机和重启 OBS 对这种情况都没用，" +
+              "必须让 Windows 重新识别采集卡。"
+            : "如果摄像机确实是开着的，需要拔插采集卡的 USB 线或重启电脑 —— 重启摄像机和重启 OBS " +
+              "对这种情况都没用，必须让 Windows 重新识别采集卡。";
+
+        en += canReset
+            ? " If the camera really is on, use \"reset the capture card\" below: restarting the camera and " +
+              "restarting OBS both do nothing here, because neither makes Windows re-enumerate the card."
+            : " If the camera really is on, unplug and re-plug the card's USB cable, or reboot: restarting " +
+              "the camera and restarting OBS both do nothing here, because neither makes Windows " +
+              "re-enumerate the card.";
+
+        return new PreflightItem
+        {
+            Key = "video",
+            Ok = false,
+            Message = new Msg(zh, en),
+            Action = canReset ? "reset-capture" : null,
+        };
     }
 
     private static PreflightItem Ok(string key, Msg message) => new() { Key = key, Ok = true, Message = message };
