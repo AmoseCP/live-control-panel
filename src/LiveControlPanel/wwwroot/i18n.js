@@ -90,6 +90,24 @@
     'link.copied': ['已复制链接。', 'Link copied.'],
     'link.copyFailed': ['这台设备不允许自动复制，请长按上面的地址手动复制。',
       'This device will not copy automatically. Press and hold the address above to copy it.'],
+    'link.original': ['原声', 'Original audio'],
+    'link.translated': ['翻译版', 'Translated'],
+    'link.copyTranslated': ['复制翻译版链接', 'Copy the translated link'],
+
+    /* ---- AI translation (operator page) ---- */
+    'translation.heading': ['AI 翻译', 'AI translation'],
+    'translation.restart': ['重新连接翻译', 'Reconnect the translator'],
+    'translation.idle': ['还没启动，开播时会自动启动。', 'Not started; it starts with the broadcast.'],
+    'translation.connecting': ['正在连接翻译服务…', 'Connecting to the translation service…'],
+    'translation.ok': ['正常，翻译语音正在送进第二条直播。',
+      'Working — translated speech is going into the second broadcast.'],
+    'translation.silent': ['已连上，但最近一分钟没有翻译语音。请确认有人在讲话、调音台推子已推起。',
+      'Connected, but no translated speech in the last minute. Check that someone is speaking and the ' +
+      'mixer faders are up.'],
+    'translation.dropped': ['翻译那条直播已经断了（YouTube 把它结束了）。请在 OBS 的「多路推流」面板' +
+      '确认第二个目标还在推流。原声这条不受影响。',
+      'The translated broadcast has dropped — YouTube ended it. Check in the OBS multi-RTMP dock that ' +
+      'the second target is still streaming. The primary broadcast is unaffected.'],
 
     /* ---- picker ---- */
     'picker.heading': ['选择场次', 'Choose a service'],
@@ -293,9 +311,55 @@
     'settings.colName': ['名称', 'Name'],
     'settings.colWeekdays': ['星期', 'Weekdays'],
     'settings.colTime': ['时间', 'Time'],
-    'settings.templatesNote': ['星期：0=周日 … 6=周六。修改场次请直接编辑服务器上的 templates.json 后重启服务。',
-      'Weekdays: 0 = Sunday … 6 = Saturday. To change services, edit templates.json on the server and restart.'],
+    'settings.colTranslate': ['翻译', 'Translation'],
+    'settings.templatesNote': ['星期：0=周日 … 6=周六。「翻译」列是该场次译音的目标语言，'
+      + '「否」表示该场不出译音；总开关关闭时整列不生效。修改场次请直接编辑服务器上的 templates.json 后重启服务。',
+      'Weekdays: 0 = Sunday … 6 = Saturday. The translation column is that service\'s target language; '
+      + '"no" means it produces no translated stream, and the whole column is moot while the master '
+      + 'switch is off. To change services, edit templates.json on the server and restart.'],
     'settings.adHocRow': ['（临时直播，不参与自动匹配）', ' (ad-hoc; never matched automatically)'],
+
+    'settings.translationHeading': ['AI 翻译（第二条直播）', 'AI translation (second broadcast)'],
+    'settings.translationHint': ['默认<strong>不开启</strong>。开启后，每场直播会建两条 YouTube 直播：' +
+      '一条走调音台原声，一条走 Gemini 实时翻译出来的人声。画面只编码一次 —— 在 OBS 的「多路推流」插件里' +
+      '把第二个目标的视频编码器设为「与 OBS 主输出相同」，音轨选翻译那一轨，并勾选「与 OBS 同步开始/停止」。' +
+      '翻译坏掉<strong>不会</strong>影响原声那条。',
+      'Off <strong>by default</strong>. Once on, each service creates two YouTube broadcasts: one carrying ' +
+      'the mixer audio and one carrying the voice Gemini translates in real time. The picture is encoded ' +
+      'once — in the OBS multi-RTMP plugin, set the second target\'s video encoder to "same as OBS output", ' +
+      'pick the translation audio track, and tick sync start/stop with OBS. A broken translator ' +
+      '<strong>cannot</strong> affect the primary broadcast.'],
+    'settings.translationEnable': ['启用 AI 翻译', 'Enable AI translation'],
+    'settings.translationApiKey': ['Gemini API Key', 'Gemini API key'],
+    'settings.translationModel': ['模型', 'Model'],
+    'settings.translationTarget': ['目标语言（BCP-47，如 en、zh-CN）', 'Target language (BCP-47, e.g. en, zh-CN)'],
+    'settings.translationEcho': ['讲员已经在说目标语言时原样透传（建议开启）',
+      'Pass speech through when it is already in the target language (recommended)'],
+    'settings.translationSuffix': ['第二条直播的标题后缀', 'Title suffix for the second broadcast'],
+    'settings.translationCapture': ['采集设备（调音台那个录音设备，和 OBS 用的是同一个）',
+      'Recording device (the mixer — the same one OBS uses)'],
+    'settings.translationPlayback': ['播放设备（虚拟声卡的 CABLE Input，千万别选调音台）',
+      'Playback device (the virtual cable\'s CABLE Input — never the mixer)'],
+    'settings.translationObsInput': ['OBS 里翻译音频源的名称（用于自检，可留空）',
+      'Name of the translation audio source in OBS (for the checks; optional)'],
+    'settings.translationTrack': ['翻译音频用 OBS 的第几条音轨', 'Which OBS audio track carries the translation'],
+    'settings.translationKeyHeading': ['翻译用推流密钥（一次性）', 'Translation stream key (one-time)'],
+    'settings.translationKeyHint': ['与原声那条必须是两个不同的密钥：一个 liveStream 同一时刻只能绑一条直播。' +
+      '这个密钥填进 OBS「多路推流」的第二个目标。',
+      'It has to be a second, different key: one liveStream can only back one live broadcast at a time. ' +
+      'Enter this one in the second target of the OBS multi-RTMP dock.'],
+    'settings.translationKeyCreate': ['创建翻译用推流密钥', 'Create the translation stream key'],
+    'settings.confirmTranslationKey': ['创建一个新的翻译用推流密钥？创建后需要填进 OBS 的多路推流目标。',
+      'Create a new translation stream key? It will need entering in the OBS multi-RTMP target.'],
+    'settings.confirmTranslationKeyArm': ['再点一次，确认创建翻译密钥',
+      'Tap again to create the translation key'],
+    'settings.translationTest': ['测试翻译链路（约 20 秒）', 'Test the translation path (about 20 s)'],
+    'settings.translationTesting': ['测试中，请对着麦克风连续说几句话…',
+      'Testing — keep speaking into a microphone…'],
+    'settings.translationHeard': ['听到的原话', 'Heard'],
+    'settings.translationSaid': ['翻译结果', 'Translation'],
+    'settings.translationDefaultDevice': ['（系统默认）', '(system default)'],
+    'settings.translationDevicesFailed': ['读不到声音设备列表。', 'Could not read the audio device list.'],
 
     'settings.save': ['保存设置', 'Save settings']
   };

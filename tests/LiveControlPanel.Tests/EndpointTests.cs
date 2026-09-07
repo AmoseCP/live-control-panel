@@ -8,6 +8,7 @@ using LiveControlPanel.Net;
 using LiveControlPanel.Notify;
 using LiveControlPanel.Obs;
 using LiveControlPanel.Slides;
+using LiveControlPanel.Translate;
 using LiveControlPanel.Youtube;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -60,6 +61,8 @@ public sealed class EndpointTests : IAsyncLifetime
         builder.Services.AddSingleton<ITelegramClient>(_fixtures.Telegram);
         builder.Services.AddSingleton<IDeviceResetter>(_fixtures.Devices);
         builder.Services.AddSingleton(_fixtures.CaptureRecovery);
+        builder.Services.AddSingleton<IAudioEngine>(_fixtures.Audio);
+        builder.Services.AddSingleton<ITranslationService>(_fixtures.Translation);
         builder.Services.AddSingleton(_fixtures.Preflight);
         builder.Services.AddSingleton(_fixtures.Orchestrator);
         builder.Services.AddSingleton(_fixtures.Notifications);
@@ -106,6 +109,7 @@ public sealed class EndpointTests : IAsyncLifetime
                      "/api/settings", "/api/templates",
                      "/api/stream-key/create",
                      "/api/capture/reset", "/api/diag/usb-devices",
+                     "/api/audio-devices", "/api/translate/test", "/api/translate/restart",
                      "/api/diag/windows",
                  })
         {
@@ -192,7 +196,9 @@ public sealed class EndpointTests : IAsyncLifetime
     [Fact]
     public async Task An_out_of_range_retry_step_is_rejected()
     {
-        foreach (var step in new[] { 0, 7, 99 })
+        // Bounds come from the constants rather than literals: the sequence grew by a step when the
+        // translated broadcast was added, and a hard-coded 7 quietly turned into a valid request.
+        foreach (var step in new[] { 0, Orchestrator.StepAwaitLive + 1, 99 })
         {
             var response = await _client.PostAsync($"/api/broadcast/retry/{step}?k={_code}", null);
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -754,6 +760,46 @@ public sealed class EndpointTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, (await _client.SendAsync(request)).StatusCode);
         Assert.False(_fixtures.Config.Settings.CaptureReset.Enabled);
+    }
+
+    // ---------------------------------------------------------------- AI translation
+
+    /// <summary>
+    /// A blank device id never overwrites a configured one.
+    ///
+    /// The pickers fill in asynchronously, and a save that raced them replaced a chosen device with
+    /// a blank. That was worse than it looks for the capture device: an empty one used to fall
+    /// through to the system default recording device, so the translator would go on translating
+    /// whatever microphone Windows preferred while the panel showed everything as fine.
+    /// </summary>
+    [Fact]
+    public async Task A_partial_save_cannot_blank_the_translation_devices()
+    {
+        _fixtures.EnableTranslation();
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/settings?k={_code}")
+        {
+            Content = JsonContent.Create(new
+            {
+                translation = new
+                {
+                    enabled = true,
+                    apiKey = "test-key",
+                    captureDeviceId = "",
+                    playbackDeviceId = "",
+                    targetLanguage = "en",
+                },
+            }),
+        };
+        request.Headers.Add(AccessGate.PinHeader, _pin);
+
+        Assert.Equal(HttpStatusCode.OK, (await _client.SendAsync(request)).StatusCode);
+
+        var translation = _fixtures.Config.Settings.Translation;
+        Assert.Equal("mixer-1", translation.CaptureDeviceId);
+        Assert.Equal("cable-1", translation.PlaybackDeviceId);
+        // The stream key was already protected this way; the devices now match it.
+        Assert.Equal("stream-2", translation.StreamId);
     }
 
     /// <summary>The device picker is behind the PIN: choosing the wrong device is the whole risk.</summary>

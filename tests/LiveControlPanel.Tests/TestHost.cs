@@ -2,6 +2,7 @@ using LiveControlPanel.Config;
 using LiveControlPanel.Core;
 using LiveControlPanel.Devices;
 using LiveControlPanel.Slides;
+using LiveControlPanel.Translate;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace LiveControlPanel.Tests;
@@ -39,10 +40,13 @@ public sealed class TestHost : IDisposable
         Telegram = new FakeTelegramClient();
 
         Devices = new FakeDeviceResetter();
+        Audio = new FakeAudioEngine();
+        Translation = new FakeTranslationService();
 
-        Orchestrator = new Orchestrator(Config, State, YouTube, Obs, NullLogger<Orchestrator>.Instance);
+        Orchestrator = new Orchestrator(
+            Config, State, YouTube, Obs, Translation, NullLogger<Orchestrator>.Instance);
         Notifications = new NotificationService(Config, State, Telegram);
-        Preflight = new Preflight(Config, Obs, YouTube, State, NullLogger<Preflight>.Instance)
+        Preflight = new Preflight(Config, Obs, YouTube, State, Audio, NullLogger<Preflight>.Instance)
         {
             // The frozen-frame check waits a real second and a half between samples. What is under
             // test is the comparison and the message, not the wait.
@@ -57,6 +61,7 @@ public sealed class TestHost : IDisposable
             ReadyDelay = TimeSpan.FromMilliseconds(10),
             EnableRetryDelay = TimeSpan.FromMilliseconds(10),
         };
+
     }
 
     public string Root { get; }
@@ -69,6 +74,8 @@ public sealed class TestHost : IDisposable
     public FakeObsClient Obs { get; }
     public FakeTelegramClient Telegram { get; }
     public FakeDeviceResetter Devices { get; }
+    public FakeAudioEngine Audio { get; }
+    public FakeTranslationService Translation { get; }
     public Orchestrator Orchestrator { get; }
     public NotificationService Notifications { get; }
     public Preflight Preflight { get; }
@@ -98,6 +105,22 @@ public sealed class TestHost : IDisposable
             s.CaptureReset.DeviceInstanceId = FakeDeviceResetter.CaptureCardId;
             s.CaptureReset.DeviceName = "AVerMedia HDMI Capture";
             s.CaptureReset.ObsInputName = obsInputName;
+        });
+
+    /// <summary>
+    /// Turns the bilingual path on the way a deployed panel would: the master switch plus the second
+    /// stream key and an API key, which is what <see cref="TranslationPlan"/> calls "ready".
+    /// </summary>
+    public void EnableTranslation(string targetLanguage = "en", string titleSuffix = " (English)") =>
+        Config.UpdateSettings(s =>
+        {
+            s.Translation.Enabled = true;
+            s.Translation.ApiKey = "test-key";
+            s.Translation.StreamId = "stream-2";
+            s.Translation.TargetLanguage = targetLanguage;
+            s.Translation.TitleSuffix = titleSuffix;
+            s.Translation.PlaybackDeviceId = "cable-1";
+            s.Translation.CaptureDeviceId = "mixer-1";
         });
 
     /// <summary>Writes a real file so the thumbnail step has something to upload.</summary>

@@ -34,6 +34,8 @@
     loadAuthStatus();
     // The device list carries a translated "(none selected)" entry, so it is rebuilt too.
     loadCaptureDevices();
+    // The device lists carry a translated "(system default)" entry, so they are rebuilt too.
+    loadAudioDevices();
   };
 
   /* ---- unlock ------------------------------------------------------------ */
@@ -139,6 +141,7 @@
     value('window-after', window_.afterMinutes);
 
     fillCaptureReset();
+    fillTranslation();
   }
 
   /* ---- capture-card recovery --------------------------------------------- */
@@ -200,6 +203,75 @@
     return element;
   }
 
+  /* ---- AI translation ---------------------------------------------------- */
+
+  function fillTranslation() {
+    var tr = settings.translation || {};
+
+    var enabled = document.getElementById('tr-enabled');
+    if (enabled) enabled.checked = !!tr.enabled;
+    var echo = document.getElementById('tr-echo');
+    if (echo) echo.checked = tr.echoTargetLanguage !== false;
+
+    value('tr-api-key', tr.apiKey);
+    value('tr-model', tr.model);
+    value('tr-target', tr.targetLanguage);
+    value('tr-suffix', tr.titleSuffix);
+    value('tr-obs-input', tr.obsInputName);
+    value('tr-track', tr.obsAudioTrack || 2);
+    L.text('tr-stream-id', tr.streamId || '—');
+
+    loadAudioDevices();
+  }
+
+  /*
+   * Device ids, not names: Windows reports the same friendly name for two different endpoints often
+   * enough, and the id is what the service actually opens. The list is re-read every time this page
+   * loads because a mixer moved to another USB port comes back with a new id.
+   */
+  function loadAudioDevices() {
+    L.api.get('/api/audio-devices').then(function (result) {
+      var data = result.data;
+      var tr = (settings && settings.translation) || {};
+
+      if (!data) {
+        L.toast(t('settings.translationDevicesFailed'), 'bad');
+        return;
+      }
+
+      fillDevices('tr-capture', data.capture || [], tr.captureDeviceId,
+        t('settings.translationDefaultDevice'));
+      fillDevices('tr-playback', data.playback || [], tr.playbackDeviceId, '—');
+    });
+  }
+
+  function fillDevices(id, devices, selected, emptyLabel) {
+    var element = document.getElementById(id);
+    if (!element) return;
+
+    element.innerHTML = '';
+    element.appendChild(option('', emptyLabel));
+
+    var found = false;
+    devices.forEach(function (device) {
+      element.appendChild(option(device.id, device.name + (device.isDefault ? ' ★' : '')));
+      if (device.id === selected) found = true;
+    });
+
+    // A configured device that Windows no longer reports must stay visible and stay selected —
+    // silently falling back to "system default" is how the translated voice ends up in the PA.
+    if (selected && !found) element.appendChild(option(selected, selected + ' （?）'));
+
+    element.value = selected || '';
+  }
+
+  function option(v, label) {
+    var element = document.createElement('option');
+    element.value = v;
+    element.textContent = label;
+    return element;
+  }
+
   L.on('btn-list-devices', loadCaptureDevices);
 
   /*
@@ -240,7 +312,41 @@
     return option.textContent.split('\u3000·\u3000')[0];
   }
 
+  /*
+   * A device selection, but only when the picker can actually represent one.
+   *
+   * The lists fill in asynchronously and are left empty when the request fails. Reading an
+   * unpopulated <select> yields '', and the server replaces the whole translation section — so an
+   * administrator who changed anything at all within that window silently lost the configured
+   * devices. That is worse here than it looks: an empty captureDeviceId falls through to the
+   * *system default recording device*, so the translator would go on happily translating a webcam
+   * microphone while the panel showed everything as fine.
+   *
+   * An empty picker means "I do not know", not "the administrator chose nothing".
+   */
+  function pickedDevice(id, storedKey) {
+    var stored = (settings.translation || {})[storedKey] || '';
+    var picker = document.getElementById(id);
+
+    if (!picker || picker.options.length === 0) return stored;
+    return picker.value;
+  }
+
   L.on('btn-save', function () {
+    saveSettings().then(function (result) {
+      report(result);
+    });
+  });
+
+  /*
+   * The whole form as one PUT, returned as a promise.
+   *
+   * Extracted from the save button because the translation smoke test has to run against stored
+   * settings, not against what happens to be on screen: testing an API key the operator just typed
+   * and has not saved would report a failure that does not exist, or a success that vanishes on the
+   * next restart.
+   */
+  function saveSettings() {
     var body = {
       streamId: settings.streamId,
       defaultDescription: value('default-description'),
@@ -272,24 +378,41 @@
         clientId: value('yt-client-id'),
         clientSecret: value('yt-client-secret'),
         assumedValidityDays: (settings.youTube && settings.youTube.assumedValidityDays) || 180
+      },
+      translation: {
+        enabled: !!(document.getElementById('tr-enabled') || {}).checked,
+        apiKey: value('tr-api-key'),
+        model: value('tr-model'),
+        targetLanguage: value('tr-target'),
+        echoTargetLanguage: !!(document.getElementById('tr-echo') || {}).checked,
+        titleSuffix: value('tr-suffix'),
+        // Created through its own endpoint; the server keeps the stored one when this is blank.
+        streamId: (settings.translation && settings.translation.streamId) || '',
+        captureDeviceId: pickedDevice('tr-capture', 'captureDeviceId'),
+        playbackDeviceId: pickedDevice('tr-playback', 'playbackDeviceId'),
+        obsInputName: value('tr-obs-input'),
+        obsAudioTrack: intOr(value('tr-track'), 2)
       }
     };
 
     var newPin = value('new-pin').trim();
     if (newPin) body.settingsPin = newPin;
 
-    L.api.put('/api/settings', body).then(function (result) {
-      report(result);
-      if (!result.ok) return;
+    return L.api.put('/api/settings', body).then(function (result) {
+      if (result.ok && newPin) L.setSettingsPin(newPin);
 
-      if (newPin) L.setSettingsPin(newPin);
+      // Keep the in-memory copy in step: the pickers rebuild themselves from it, and a stale copy
+      // would show a previously selected device as still selected after a change.
+      if (result.ok) {
+        settings.translation = body.translation;
+        settings.captureReset = body.captureReset;
+        settings.obs = body.obs;
+        settings.slides = body.slides;
+      }
 
-      // Keep the in-memory copy in step: the device picker rebuilds itself from it, and a stale
-      // copy would show the previously selected card as still selected after a change.
-      settings.obs = body.obs;
-      settings.captureReset = body.captureReset;
+      return result;
     });
-  });
+  }
 
   function splitList(text) {
     return (text || '').split(',').map(function (s) { return s.trim(); })
@@ -422,6 +545,60 @@
     if (element) L.copyText(element.textContent);
   });
 
+  /* ---- translation stream key and smoke test ----------------------------- */
+
+  L.armConfirm('btn-create-tr-key', function () { return t('settings.confirmTranslationKeyArm'); },
+    function () {
+      L.api.post('/api/stream-key/create?slot=translation').then(function (result) {
+        var data = result.data || {};
+        report(result);
+        if (!data.ingestionKey) return;
+
+        settings.translation = settings.translation || {};
+        settings.translation.streamId = data.streamId;
+        L.text('tr-stream-id', data.streamId);
+        L.text('tr-ingest-address', data.ingestionAddress);
+        L.text('tr-ingest-key', data.ingestionKey);
+        L.show('tr-key-result', true);
+      });
+    });
+
+  L.on('btn-copy-tr-key', function () {
+    var element = document.getElementById('tr-ingest-key');
+    if (element) L.copyText(element.textContent);
+  });
+
+  /*
+   * Four things have to line up for the translated stream to have sound — the key, the network, the
+   * mixer endpoint and the virtual cable — and all four fail the same silent way. This runs the real
+   * path for twenty seconds and says which one is wrong, at deploy time rather than at 04:40.
+   */
+  L.on('btn-test-translation', function () {
+    var button = document.getElementById('btn-test-translation');
+    var out = document.getElementById('tr-test-out');
+
+    if (out) { L.show('tr-test-out', true); out.textContent = t('settings.translationTesting'); }
+    if (button) button.disabled = true;
+
+    // Save first: the test runs against stored settings, not against what is on screen.
+    saveSettings().then(function () {
+      return L.api.post('/api/translate/test');
+    }).then(function (result) {
+      if (button) button.disabled = false;
+
+      var data = result.data || {};
+      var lines = [pick(data.message)];
+      if (data.inputTranscript) lines.push(t('settings.translationHeard') + ': ' + data.inputTranscript);
+      if (data.outputTranscript) lines.push(t('settings.translationSaid') + ': ' + data.outputTranscript);
+
+      if (out) out.textContent = lines.filter(Boolean).join('\n');
+      L.toast(pick(data.message) || t('generic.done'), data.ok ? 'good' : 'bad');
+    }).catch(function () {
+      if (button) button.disabled = false;
+      if (out) out.textContent = t('generic.failed');
+    });
+  });
+
   /* ---- telegram test ----------------------------------------------------- */
 
   L.on('btn-test-telegram', function () {
@@ -524,7 +701,13 @@
         var name = template.id === 'custom'
           ? (template.name || '') + t('settings.adHocRow')
           : template.name;
-        [name, (template.weekdays || []).join(','), template.startTime || '—']
+        // The translation column is read from the stored template, not from the global switch: a
+        // service that opted out must be visibly different from one that did not.
+        var translate = template.translate === false
+          ? t('settings.no')
+          : (template.targetLanguage || (settings.translation && settings.translation.targetLanguage) || 'en');
+
+        [name, (template.weekdays || []).join(','), template.startTime || '—', translate]
           .forEach(function (cell) {
             var td = document.createElement('td');
             td.textContent = cell;

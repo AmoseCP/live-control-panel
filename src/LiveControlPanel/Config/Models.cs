@@ -23,6 +23,21 @@ public sealed class ServiceTemplate
     public bool MadeForKids { get; set; }
     public string LatencyPreference { get; set; } = "ultraLow";
 
+    /// <summary>
+    /// Whether this service also gets the AI-translated second broadcast. Defaults to true so that
+    /// switching translation on in settings covers every service; an individual service that should
+    /// stay single-language turns it off here. Has no effect while
+    /// <see cref="TranslationSettings.Enabled"/> is false.
+    /// </summary>
+    public bool Translate { get; set; } = true;
+
+    /// <summary>
+    /// BCP-47 target language for this service, overriding <see cref="TranslationSettings.TargetLanguage"/>.
+    /// Null follows the global setting. This is what makes a mixed schedule work: a Chinese service
+    /// carries "en" and an English service carries "zh-CN", and the model detects the source itself.
+    /// </summary>
+    public string? TargetLanguage { get; set; }
+
     public ServiceTemplate Clone() => (ServiceTemplate)MemberwiseClone();
 }
 
@@ -135,6 +150,86 @@ public sealed class YouTubeSettings
     public int AssumedValidityDays { get; set; } = 180;
 }
 
+/// <summary>
+/// The AI-translated second broadcast.
+///
+/// One camera feed, two YouTube broadcasts: OBS encodes the video once and fans it out to two RTMP
+/// targets (obs-multi-rtmp with the video encoder set to "same as OBS output"), each carrying a
+/// different audio track. Track 1 is the mixer; track 2 is the voice this panel synthesizes by
+/// streaming the mixer audio through Gemini's live translation model and playing the result into a
+/// virtual audio cable that OBS captures.
+///
+/// Nothing here may ever be able to disturb the primary broadcast. The panel starts one OBS stream
+/// exactly as before — the plugin's "sync start/stop with OBS" carries the second target — so a
+/// dead translator produces a silent English stream and a warning, never an interrupted service.
+/// </summary>
+public sealed class TranslationSettings
+{
+    /// <summary>
+    /// Off until deliberately switched on. Everything downstream — the second broadcast, the second
+    /// stream key, the Gemini session, the audio devices — is gated on this, so a panel that has
+    /// never been configured for translation behaves exactly as it did before.
+    /// </summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>Google AI Studio API key for the Gemini Live API.</summary>
+    public string ApiKey { get; set; } = "";
+
+    /// <summary>
+    /// The live translation model. Pinned in settings rather than in code because preview model ids
+    /// are renamed on Google's schedule, not ours, and a rename must be fixable without a rebuild on
+    /// a church PC.
+    /// </summary>
+    public string Model { get; set; } = "models/gemini-3.5-live-translate-preview";
+
+    /// <summary>BCP-47 code of the language the second broadcast speaks. A service may override it.</summary>
+    public string TargetLanguage { get; set; } = "en";
+
+    /// <summary>
+    /// Passed to the model as translationConfig.echoTargetLanguage. True means "when the speaker is
+    /// already speaking the target language, pass it through instead of falling silent" — which is
+    /// the whole reason a single session survives a bilingual speaker who switches mid-sentence.
+    /// </summary>
+    public bool EchoTargetLanguage { get; set; } = true;
+
+    /// <summary>Appended to the primary title to name the second broadcast.</summary>
+    public string TitleSuffix { get; set; } = " (English)";
+
+    /// <summary>
+    /// The second reusable YouTube stream key, created once on the settings page and entered into
+    /// the obs-multi-rtmp target. Separate from <see cref="AppSettings.StreamId"/> because one
+    /// liveStream can only be bound to one live broadcast at a time.
+    /// </summary>
+    public string StreamId { get; set; } = "";
+
+    /// <summary>
+    /// WASAPI device id the original speech is read from — the mixer's own USB interface, the same
+    /// device OBS captures. Shared mode, so both can hold it open. Empty means the system default
+    /// recording device, which on this PC is usually the wrong one.
+    /// </summary>
+    public string CaptureDeviceId { get; set; } = "";
+
+    /// <summary>
+    /// WASAPI device the translated voice is played to — the virtual cable's input (VB-CABLE's
+    /// "CABLE Input"). It must NOT be the mixer's playback side: that would put the translation into
+    /// the house PA and back into the main mix.
+    /// </summary>
+    public string PlaybackDeviceId { get; set; } = "";
+
+    /// <summary>
+    /// Name of the OBS input that captures the cable's output, checked by the pre-flight the same way
+    /// the mixer input is. Empty skips that check.
+    /// </summary>
+    public string ObsInputName { get; set; } = "";
+
+    /// <summary>
+    /// Which OBS audio track the translated voice is routed to. Recorded for the deployment
+    /// checklist and the settings page only — OBS's track routing is not reachable over
+    /// obs-websocket, so this is documentation, not control.
+    /// </summary>
+    public int ObsAudioTrack { get; set; } = 2;
+}
+
 public sealed class AppSettings
 {
     public int Port { get; set; } = 5088;
@@ -151,6 +246,7 @@ public sealed class AppSettings
     public MatchWindowSettings MatchWindow { get; set; } = new();
     public YouTubeSettings YouTube { get; set; } = new();
     public CaptureResetSettings CaptureReset { get; set; } = new();
+    public TranslationSettings Translation { get; set; } = new();
 }
 
 public static class Json

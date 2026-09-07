@@ -52,7 +52,9 @@ public sealed class NotificationService
                 ? template!.TelegramMessage!
                 : settings.TelegramMessageDefault;
 
-            var text = Render(pattern, broadcast.Title ?? "", broadcast.WatchUrl);
+            var translated = _state.Read(s => s.Translated);
+            var text = Render(pattern, broadcast.Title ?? "", broadcast.WatchUrl,
+                translated?.Title, translated?.WatchUrl);
 
             var result = await _telegram
                 .SendAsync(settings.TelegramBotToken, settings.TelegramChatId, text, ct)
@@ -87,9 +89,38 @@ public sealed class NotificationService
         var text = Render(settings.TelegramMessageDefault, "测试消息 / Test message",
             "https://www.youtube.com/live/TEST");
 
+
         return _telegram.SendAsync(settings.TelegramBotToken, settings.TelegramChatId, text, ct);
     }
 
-    internal static string Render(string pattern, string title, string url) =>
-        (pattern ?? "").Replace("{title}", title).Replace("{url}", url);
+    /// <summary>
+    /// Fills the message template.
+    ///
+    /// The second, AI-translated broadcast is a separate video with its own link, and an unlisted
+    /// stream's link is the only way anyone finds it — so when a translated broadcast exists and the
+    /// template does not mention <c>{url2}</c>, its link is appended rather than dropped. A template
+    /// that does use <c>{url2}</c> is left exactly as written, which is how an administrator takes
+    /// the placement back.
+    /// </summary>
+    internal static string Render(
+        string pattern, string title, string url,
+        string? translatedTitle = null, string? translatedUrl = null)
+    {
+        var text = (pattern ?? "")
+            .Replace("{title}", title)
+            .Replace("{url}", url);
+
+        var hasPlaceholder = text.Contains("{url2}") || text.Contains("{title2}");
+
+        text = text
+            .Replace("{title2}", translatedTitle ?? "")
+            .Replace("{url2}", translatedUrl ?? "");
+
+        if (!hasPlaceholder && !string.IsNullOrWhiteSpace(translatedUrl))
+        {
+            text += "\n" + (string.IsNullOrWhiteSpace(translatedTitle) ? "" : translatedTitle + "\n") + translatedUrl;
+        }
+
+        return text;
+    }
 }

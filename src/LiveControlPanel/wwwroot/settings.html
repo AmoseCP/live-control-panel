@@ -128,6 +128,54 @@
   </section>
 
   <section class="card">
+    <h2 data-i18n="settings.translationHeading">AI 翻译（第二条直播）</h2>
+    <p class="subtle" style="margin-top:0" data-i18n="settings.translationHint" data-i18n-html="1"></p>
+    <label style="display:flex;align-items:center;gap:10px;font-size:1rem;color:var(--text)">
+      <input type="checkbox" id="tr-enabled" style="width:22px;height:22px;min-height:0">
+      <span data-i18n="settings.translationEnable">启用 AI 翻译</span>
+    </label>
+
+    <label for="tr-api-key" data-i18n="settings.translationApiKey">Gemini API Key</label>
+    <input type="password" id="tr-api-key" autocomplete="off">
+    <label for="tr-model" data-i18n="settings.translationModel">模型</label>
+    <input type="text" id="tr-model">
+    <label for="tr-target" data-i18n="settings.translationTarget">目标语言（BCP-47，如 en、zh-CN）</label>
+    <input type="text" id="tr-target">
+    <label style="display:flex;align-items:center;gap:10px;font-size:1rem;color:var(--text);margin-top:10px">
+      <input type="checkbox" id="tr-echo" style="width:22px;height:22px;min-height:0">
+      <span data-i18n="settings.translationEcho">讲员已经在说目标语言时原样透传（建议开启）</span>
+    </label>
+    <label for="tr-suffix" data-i18n="settings.translationSuffix">第二条直播的标题后缀</label>
+    <input type="text" id="tr-suffix">
+
+    <label for="tr-capture" data-i18n="settings.translationCapture">采集设备（调音台那个录音设备，和 OBS 用的是同一个）</label>
+    <select id="tr-capture"></select>
+    <label for="tr-playback" data-i18n="settings.translationPlayback">播放设备（虚拟声卡的 CABLE Input，千万别选调音台）</label>
+    <select id="tr-playback"></select>
+
+    <label for="tr-obs-input" data-i18n="settings.translationObsInput">OBS 里翻译音频源的名称（用于自检，可留空）</label>
+    <input type="text" id="tr-obs-input">
+    <label for="tr-track" data-i18n="settings.translationTrack">翻译音频用 OBS 的第几条音轨</label>
+    <input type="number" id="tr-track" min="1" max="6">
+
+    <h2 style="margin-top:18px" data-i18n="settings.translationKeyHeading">翻译用推流密钥（一次性）</h2>
+    <p class="subtle" data-i18n="settings.translationKeyHint"></p>
+    <p class="subtle"><span data-i18n="settings.keyCurrent">当前 streamId：</span><span id="tr-stream-id">—</span></p>
+    <button id="btn-create-tr-key" data-i18n="settings.translationKeyCreate">创建翻译用推流密钥</button>
+    <div id="tr-key-result" class="hidden" style="margin-top:10px">
+      <label data-i18n="settings.keyAddress">推流地址（填入 OBS「服务器」）</label>
+      <div class="linkbox" id="tr-ingest-address"></div>
+      <label data-i18n="settings.keyValue">串流密钥（填入 OBS「串流密钥」）</label>
+      <div class="linkbox" id="tr-ingest-key"></div>
+      <button style="margin-top:10px" id="btn-copy-tr-key" data-i18n="settings.keyCopy">复制串流密钥</button>
+    </div>
+
+    <button class="ghost" style="margin-top:14px" id="btn-test-translation"
+            data-i18n="settings.translationTest">测试翻译链路（约 20 秒）</button>
+    <pre class="linkbox hidden" id="tr-test-out" style="margin-top:10px;white-space:pre-wrap"></pre>
+  </section>
+
+  <section class="card">
     <h2 data-i18n="settings.slidesHeading">幻灯片控制</h2>
     <p class="subtle" style="margin-top:0" data-i18n="settings.slidesHint" data-i18n-html="1"></p>
     <label style="display:flex;align-items:center;gap:10px;font-size:1rem;color:var(--text)">
@@ -172,6 +220,7 @@
         <th data-i18n="settings.colName">名称</th>
         <th data-i18n="settings.colWeekdays">星期</th>
         <th data-i18n="settings.colTime">时间</th>
+        <th data-i18n="settings.colTranslate">翻译</th>
       </tr></thead>
       <tbody id="templates-body"></tbody>
     </table>

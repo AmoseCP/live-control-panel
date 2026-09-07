@@ -7,6 +7,7 @@ using LiveControlPanel.Net;
 using LiveControlPanel.Notify;
 using LiveControlPanel.Obs;
 using LiveControlPanel.Slides;
+using LiveControlPanel.Translate;
 using LiveControlPanel.Youtube;
 using Microsoft.Extensions.FileProviders;
 using Serilog;
@@ -91,6 +92,13 @@ public static class Program
         // unless an administrator has chosen one.
         builder.Services.AddSingleton<IDeviceResetter, WmiDeviceResetter>();
         builder.Services.AddSingleton<CaptureRecovery>();
+        // AI translation. Registered unconditionally but inert until switched on in settings: the
+        // audio devices are only opened when a translated broadcast actually starts, so a panel that
+        // has never been configured for it never touches a sound card.
+        builder.Services.AddSingleton<IAudioEngine, WasapiAudioEngine>();
+        builder.Services.AddSingleton<IGeminiSessionFactory, GeminiWebSocketSessionFactory>();
+        builder.Services.AddSingleton<TranslationService>();
+        builder.Services.AddSingleton<ITranslationService>(sp => sp.GetRequiredService<TranslationService>());
         builder.Services.AddSingleton<Preflight>();
         builder.Services.AddSingleton<Orchestrator>();
         builder.Services.AddSingleton<NotificationService>();
@@ -225,17 +233,33 @@ public sealed class PanelBackgroundService : BackgroundService
     private static readonly TimeSpan SlidePollInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan AuthPollInterval = TimeSpan.FromMinutes(30);
 
+    /// <summary>
+    /// How often the translated broadcast's own status is read while the service is on air.
+    ///
+    /// This is the only way the panel can see the second RTMP target at all: obs-multi-rtmp exposes
+    /// no obs-websocket interface, so if that output dies mid-sermon nothing local notices. YouTube
+    /// does — it ends a broadcast that stops receiving video — and one list call per half minute is
+    /// a rounding error against the daily quota.
+    /// </summary>
+    private static readonly TimeSpan TranslatedPollInterval = TimeSpan.FromSeconds(30);
+
     private readonly ObsClient _obs;
     private readonly StateManager _state;
     private readonly IYouTubeClient _youtube;
+    private readonly ITranslationService _translation;
     private readonly ILogger<PanelBackgroundService> _log;
 
     public PanelBackgroundService(
-        ObsClient obs, StateManager state, IYouTubeClient youtube, ILogger<PanelBackgroundService> log)
+        ObsClient obs,
+        StateManager state,
+        IYouTubeClient youtube,
+        ITranslationService translation,
+        ILogger<PanelBackgroundService> log)
     {
         _obs = obs;
         _state = state;
         _youtube = youtube;
+        _translation = translation;
         _log = log;
     }
 
@@ -245,6 +269,7 @@ public sealed class PanelBackgroundService : BackgroundService
         _obs.Start();
 
         var lastAuthCheck = DateTime.MinValue;
+        var lastTranslatedCheck = DateTime.MinValue;
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -256,8 +281,95 @@ public sealed class PanelBackgroundService : BackgroundService
                 await RefreshAuthAsync(stoppingToken);
             }
 
+            if (DateTime.UtcNow - lastTranslatedCheck > TranslatedPollInterval)
+            {
+                lastTranslatedCheck = DateTime.UtcNow;
+                await RefreshTranslatedBroadcastAsync(stoppingToken);
+            }
+
+            await ReconcileTranslatorAsync();
+
             try { await Task.Delay(SlidePollInterval, stoppingToken); }
             catch (OperationCanceledException) { return; }
+        }
+    }
+
+    /// <summary>
+    /// Stops the translator whenever there is no longer a translated broadcast for it to serve.
+    ///
+    /// This is a reconciliation rather than another call site, and deliberately so. Stopping used to
+    /// hang off one code path — <c>Orchestrator.StopAsync</c>, the panel's own "end the broadcast" —
+    /// and the deployment guide's documented fallback is to stop OBS directly and end the broadcast
+    /// in YouTube Studio, which never reaches that path at all. The day rollover then cleared the
+    /// broadcast from state while the translator kept its Gemini session open, held the mixer
+    /// endpoint, and went on paying for a live-translation session around the clock — with the panel
+    /// showing a running translator and no broadcast anywhere.
+    ///
+    /// Enumerating the paths that must stop it is how that was missed twice. Asking "does the state
+    /// still call for a translator" cannot be missed, and it matches how the rest of the panel
+    /// behaves: state is re-derived, not remembered.
+    /// </summary>
+    internal async Task ReconcileTranslatorAsync()
+    {
+        if (!_translation.IsRunning) return;
+
+        // A settings-page smoke test owns the translator and deliberately runs with no translated
+        // broadcast — the very condition this method treats as orphaned. Reconciling it away made
+        // the one tool that verifies the whole chain report failure on a healthy setup.
+        if (_translation.IsTesting) return;
+
+        var wanted = _state.Read(s => s.Translated?.Id is not null
+                                      && s.Translated.Status != BroadcastStatus.Complete);
+        if (wanted) return;
+
+        _log.LogInformation("Stopping the translator: no translated broadcast is active any more");
+
+        try { await _translation.StopAsync(); }
+        catch (Exception ex) { _log.LogWarning(ex, "Stopping the orphaned translator failed"); }
+    }
+
+    /// <summary>
+    /// Follows the translated broadcast while the primary one is on air. A transition to complete on
+    /// YouTube's side means the second RTMP target stopped sending — the plugin was never started,
+    /// its key is wrong, or it dropped — and that is worth saying on the panel while there is still
+    /// a service left to fix it for.
+    /// </summary>
+    private async Task RefreshTranslatedBroadcastAsync(CancellationToken ct)
+    {
+        var (translatedId, translatedStatus, primaryLive) = _state.Read(s => (
+            s.Translated?.Id,
+            s.Translated?.Status,
+            s.Broadcast?.Status is BroadcastStatus.Live or BroadcastStatus.Testing || s.Obs.Streaming));
+
+        if (translatedId is null || !primaryLive) return;
+        if (translatedStatus == BroadcastStatus.Complete) return;
+
+        try
+        {
+            var status = await _youtube.GetLifeCycleStatusAsync(translatedId, ct);
+            if (status is null) return;
+
+            var mapped = status switch
+            {
+                "live" => BroadcastStatus.Live,
+                "testing" => BroadcastStatus.Testing,
+                "complete" or "revoked" => BroadcastStatus.Complete,
+                _ => null,
+            };
+
+            if (mapped is null || mapped == translatedStatus) return;
+
+            _state.Mutate(s =>
+            {
+                if (s.Translated is not null) s.Translated.Status = mapped;
+            });
+
+            if (mapped == BroadcastStatus.Complete)
+                _log.LogWarning("The translated broadcast {Id} ended while the service is still live", translatedId);
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "Polling the translated broadcast failed");
         }
     }
 
